@@ -607,13 +607,41 @@ def load_removal_masks(path, n_sections):
 # --------------------------------------------------------------------------
 
 
+def load_slide_transforms(brain_id, slide_num,
+                          root="/bigdata/isaac/rabies_img_processing"):
+    """Per-slide autoalignment transform manifest for one slide.
+
+    Written by tiff_pipeline_ss_functions.save_slide_transforms() during the
+    slide -> single section (mega) loop. Contains bridge metadata (crop origin
+    in raw slide coords, scales, canvas size, ...) plus the auto rotation
+    (rotate_around_centroid) and centering translation (center_img) applied to
+    each section. Returns None when the CSV does not exist (e.g. sections
+    aligned before transform tracking was added).
+    """
+    p = os.path.join(
+        str(root), str(brain_id), "single_section_autoalign", "transforms",
+        f"{brain_id}_slide_{slide_num}_transforms.csv",
+    )
+    if not os.path.exists(p):
+        print(f"no transform manifest found at {p}")
+        return None
+    return pl.read_csv(p)
+
+
 def collect_decisions(section_paths, controls, edits=None, brain_id=None,
-                      slide_num=None):
+                      slide_num=None, transforms=None):
     """Button state plus interactive edits, one row per section.
  
     rotate_ccw_deg is the buttons alone and extra_rot the sliver corrections;
-    total_rot_ccw_deg is what apply_decisions actually uses. Keeping all three
-    means a surprising result can be traced back to which control produced it.
+    review_rot_ccw_deg (= buttons + slivers) is what apply_decisions applies to
+    the autoaligned image. Keeping all three means a surprising result can be
+    traced back to which control produced it.
+
+    When `transforms` (see load_slide_transforms) is given, its bridge metadata
+    and autoalignment transforms are merged in per section, and
+    total_rot_ccw_deg becomes the cumulative rotation relative to the RAW
+    slide: auto_rot_ccw_deg (rotate_around_centroid) + review_rot_ccw_deg.
+    Without it, total_rot_ccw_deg falls back to the review rotation alone.
     """
     rows = []
     for i, p in enumerate(section_paths):
@@ -634,13 +662,30 @@ def collect_decisions(section_paths, controls, edits=None, brain_id=None,
                 "flip_lr": bool(v["flip_lr"]),
                 "rotate_ccw_deg": btn,
                 "extra_rot": round(extra, 3),
-                "total_rot_ccw_deg": round((btn + extra) % 360, 3),
+                "review_rot_ccw_deg": round((btn + extra) % 360, 3),
                 "n_removals": len(rs),
                 "removal_px": int(sum(int(r["mask"].sum()) for r in rs)),
                 "unanchored_removals": int(sum(1 for r in rs if not np.isfinite(r["at"]))),
             }
         )
-    return pl.DataFrame(rows)
+    df = pl.DataFrame(rows)
+
+    if transforms is not None and transforms.height:
+        t = transforms.drop([c for c in ("brain_id", "path") if c in transforms.columns])
+        df = df.join(t, on="section", how="left")
+
+    if "auto_rot_ccw_deg" in df.columns:
+        df = df.with_columns(
+            ((pl.col("auto_rot_ccw_deg").fill_null(0.0)
+              + pl.col("review_rot_ccw_deg")) % 360)
+            .round(3)
+            .alias("total_rot_ccw_deg")
+        )
+    else:
+        df = df.with_columns(
+            pl.col("review_rot_ccw_deg").alias("total_rot_ccw_deg")
+        )
+    return df
  
 
 
@@ -855,7 +900,10 @@ def apply_decisions(decisions, out_dir, edits=None, dry_run=True, overwrite=Fals
  
         stem, ext = os.path.splitext(row["filename"])
         out_path = os.path.join(out_dir, f"{stem}_reviewed{ext}")
-        angle = float(row["total_rot_ccw_deg"])
+        # review_rot_ccw_deg is the rotation in the autoaligned frame (what the
+        # reviewer actually did). total_rot_ccw_deg additionally folds in the
+        # upstream auto rotation and must NOT be re-applied to aligned images.
+        angle = float(row.get("review_rot_ccw_deg", row["total_rot_ccw_deg"]))
         flip = bool(row["flip_lr"])
         e = edits.get(row["idx"], {})
         removals = e.get("removals", [])

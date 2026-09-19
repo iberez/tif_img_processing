@@ -227,7 +227,8 @@ def rotate_around_centroid(
     fill=0,
     mask=None,
     slide_num=None, section_num=None,
-    save_dir = None
+    save_dir = None,
+    return_transform=False,   # True -> also return the applied linear transform
 ):
     """Rotate an image about an arbitrary centroid (cx, cy) by `angle_deg`.
 
@@ -290,6 +291,15 @@ def rotate_around_centroid(
         plt.tight_layout()
         plt.savefig(f"{save_dir}/autorotated_slice_{slide_num}_section_{section_num}.pdf")
 
+    if return_transform:
+        # CCW rotation by angle_deg about (rot_center_x, rot_center_y), in
+        # canvas pixel coords. Invert with a CW rotation about the same point.
+        _transform = {
+            "auto_rot_ccw_deg": float(angle_deg),
+            "rot_center_x": float(cx),
+            "rot_center_y": float(cy),
+        }
+        return _out, _out_mask, _transform
     return _out, _out_mask
 
 def compute_rot_angle(mask, plot=True):
@@ -491,7 +501,9 @@ def compute_symmetry_line_pca(mask, img, channel=0, plot=True,
 
 def center_img(mask, img, initial_img, channel=0, brain_id = None, plot=True,
                slide_num=None, section_num=None,
-               save_dir=None):
+               save_dir=None,
+               return_transform=False,   # True -> also return the applied linear transform
+               ):
     """Center a mask/image so the mask centroid aligns with the image center.
 
     Computes the centroid exactly as in `compute_symmetry_line_pca`, the image
@@ -632,4 +644,71 @@ def center_img(mask, img, initial_img, channel=0, brain_id = None, plot=True,
                 metadata={"axes": "CYX" if _centered_img.ndim == 3 else "YX"},
             )
 
+    if return_transform:
+        # Pure translation by (shift_x, shift_y), in canvas pixel coords.
+        # Invert by translating (-shift_x, -shift_y).
+        _transform = {
+            "shift_x": float(_shift_x),
+            "shift_y": float(_shift_y),
+            "centroid_x_pre_center": float(cx_c),
+            "centroid_y_pre_center": float(cy_c),
+            "centroid_x_post_center": float(_new_cx),
+            "centroid_y_post_center": float(_new_cy),
+            "canvas_w": int(_W),
+            "canvas_h": int(_H),
+        }
+        return _centered_img, _centered_mask, _transform
     return _centered_img, _centered_mask
+
+
+def save_slide_transforms(
+    transform_rows,
+    brain_id,
+    slide_num,
+    save_dir,
+    bridge_manifest=None,
+    verbose=True,
+):
+    """Write one CSV per slide recording the autoalignment linear transforms.
+
+    One row per section. Columns combine:
+
+    * bridge metadata from extract_sections() (crop_y0/crop_x0 = canvas origin
+      in raw slide coords, centroid_*_raw, scale_y/scale_x, canvas_size, ...)
+    * the rotation applied by rotate_around_centroid():
+      auto_rot_ccw_deg about (rot_center_x, rot_center_y)
+    * the translation applied by center_img(): (shift_x, shift_y)
+
+    To map an autoaligned section image back onto the raw slide, invert the
+    forward chain in reverse order:
+
+    1. translate by (-shift_x, -shift_y)                     [undo center_img]
+    2. rotate auto_rot_ccw_deg degrees CW about
+       (rot_center_x, rot_center_y)              [undo rotate_around_centroid]
+    3. add (crop_x0, crop_y0) to x/y coords to go from canvas coords to raw
+       slide coords                              [undo extract_sections crop]
+
+    Review-time edits (flip / extra rotation / removals) are tracked separately
+    by tiff_pipeline_review_functions.collect_decisions(), which merges this
+    CSV into the review manifest.
+
+    Returns the path of the written CSV.
+    """
+    df = pl.DataFrame(transform_rows).sort("section")
+    if bridge_manifest is not None and bridge_manifest.height:
+        bm = bridge_manifest.filter(pl.col("slide") == str(slide_num))
+        if "filename" in bm.columns:
+            bm = bm.rename({"filename": "autoraw_filename"})
+        if bm.height:
+            df = bm.join(df, on=["slide", "section"], how="full", coalesce=True).sort("section")
+        elif verbose:
+            print(f"  WARNING: no bridge manifest rows for slide {slide_num}; "
+                  f"transforms saved without bridge metadata")
+
+    out_dir = Path(save_dir) / "transforms"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{brain_id}_slide_{slide_num}_transforms.csv"
+    df.write_csv(out_path)
+    if verbose:
+        print(f"  wrote {df.height} section transforms -> {out_path}")
+    return str(out_path)
