@@ -70,7 +70,11 @@ def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
     _counter_l1  = 0
 
     #_slide_path = _all_slide_paths[0]
-    for _slide_path in _all_slide_paths:
+    for _slide_path in mo.status.progress_bar(
+        _all_slide_paths, title="running preprocessing...",
+        subtitle=f"brain {_brain_id}", completion_title="✅ preprocessing — Done",
+        remove_on_exit=False,
+    ):
         _start_time_l1 = time.perf_counter()
         _slide_name = str(_slide_path).split('/')[-1].split('.')[0]
         print (f'processing {_slide_name}')
@@ -114,6 +118,8 @@ def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
         print (f'completed in {_execution_time_l1:6f} seconds')
         print (f'{_counter_l1}/{_num_slides}')
 
+    mo.output.append(mo.md("✅ **preprocessing** — Done"))
+
     _end_time_all_slides = time.perf_counter()
     _execution_time_all_slides = _end_time_all_slides - _start_time_all_slides
 
@@ -126,20 +132,29 @@ def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
     _meta_paths = sorted(_BRIDGE_ROOT.rglob("*_bridge_meta.json"))
     _slide_inputs = {}
     _inv_dfs = []
-    for _p in _meta_paths:
+    for _p in mo.status.progress_bar(
+        _meta_paths, title="configuring single section metadata...",
+        subtitle=f"brain {_brain_id}", completion_title="✅ single section metadata — Done",
+        remove_on_exit=False,
+    ):
         _lm, _meta = tpbf.load_bridge_inputs(_p)
         _slide_inputs[_meta["slide_name"]] = (_lm, _meta)
         _inv_dfs.append(tpbf.inventory_sections(
             _lm, _meta["slide_name"], _meta["scale_y"], _meta["scale_x"]
         ))
 
+    mo.output.append(mo.md("✅ **single section metadata** — Done"))
     print(f"{len(_inv_dfs)} slides, {sum(d.height for d in _inv_dfs)} sections total")
 
     _canvas_size = tpbf.plan_canvas(_inv_dfs, margin_frac=0.05, round_to=64)
     _single_section_out_dir = str(Path(_slide_out_folder).parent) + '/single_section_autoraw/'
 
     _manifests = []
-    for _name, (_lm, _meta) in _slide_inputs.items():
+    for _name, (_lm, _meta) in mo.status.progress_bar(
+        list(_slide_inputs.items()), title="extracting single sections...",
+        subtitle=f"brain {_brain_id}", completion_title="✅ extracting single sections — Done",
+        remove_on_exit=False,
+    ):
         print(_name)
         _inv = tpbf.inventory_sections(_lm, _name, _meta["scale_y"], _meta["scale_x"])
         _manifests.append(tpbf.extract_sections(
@@ -153,6 +168,7 @@ def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
             scale_x=_meta["scale_x"],
         ))
     _bridge_manifest = pl.concat(_manifests)
+    mo.output.append(mo.md("✅ **extracting single sections** — Done"))
     print ('done. Entering single section processing loop...')
 
     #autoraw single section dir
@@ -171,7 +187,11 @@ def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
     _start_time_all_imgs = time.perf_counter()
     _counter_l2  = 0
     _tf_rows_by_slide = {}
-    for _i,_stf in enumerate(_single_tiff_filenames):
+    for _i,_stf in enumerate(mo.status.progress_bar(
+        _single_tiff_filenames, title="processing single sections...",
+        subtitle=f"brain {_brain_id}", completion_title="✅ processing single sections — Done",
+        remove_on_exit=False,
+    )):
         _slide_num = _single_tiff_filenames[_i].split('.')[0]
         _section_num = int(_single_tiff_filenames[_i].split('_')[2].split('.')[0])
         _start_time_l2 = time.perf_counter()
@@ -228,6 +248,8 @@ def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
         print (f'completed in {_execution_time_l2}')
         print (f'{_counter_l2}/{_num_files}')
 
+
+    mo.output.append(mo.md("✅ **processing single sections** — Done"))
 
     _end_time_all_imgs = time.perf_counter()
     _execution_time_all_imgs = _end_time_all_imgs - _start_time_all_imgs
