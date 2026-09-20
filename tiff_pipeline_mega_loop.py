@@ -67,7 +67,7 @@ def mega_loop(brain_id):
     print (f'found {_num_slides} slides to process')
 
     _start_time_all_slides = time.perf_counter()
-    _counter_l1  = 1
+    _counter_l1  = 0
 
     #_slide_path = _all_slide_paths[0]
     for _slide_path in _all_slide_paths:
@@ -110,7 +110,9 @@ def mega_loop(brain_id):
         _end_time_l1 = time.perf_counter()
         _execution_time_l1 = _end_time_l1 - _start_time_l1
         _execution_time_l1_fmt = timedelta(seconds = _execution_time_l1)
+        _counter_l1+=1
         print (f'completed in {_execution_time_l1:6f} seconds')
+        print (f'{_counter_l1}/{_num_slides}')
 
     _end_time_all_slides = time.perf_counter()
     _execution_time_all_slides = _end_time_all_slides - _start_time_all_slides
@@ -167,7 +169,7 @@ def mega_loop(brain_id):
     os.makedirs(_save_dir, exist_ok=True)
 
     _start_time_all_imgs = time.perf_counter()
-    _counter_l2  = 1
+    _counter_l2  = 0
     _tf_rows_by_slide = {}
     for _i,_stf in enumerate(_single_tiff_filenames):
         _slide_num = _single_tiff_filenames[_i].split('.')[0]

@@ -1265,7 +1265,6 @@ def _():
     #    _a.axis("off")
     #plt.tight_layout()
     #plt.gca()
-
     return
 
 
@@ -1420,7 +1419,7 @@ def _():
 
 @app.cell
 def _(mo, tpml):
-    _enable_mega_loop = True
+    _enable_mega_loop = False
     mo.stop(_enable_mega_loop is not True, mo.md("*mega loop disabled (`_enable_mega_loop` is not True)*"))
 
     _brain_ids_to_process = ['129_02']#['140_01','141_03','137_02','137_04']
