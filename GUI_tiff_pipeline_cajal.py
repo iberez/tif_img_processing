@@ -90,7 +90,7 @@ def _():
 def _(mo):
     mo.md(r"""
     # 1 · Slide to single sections (auto processing)
-    Toggle **batch process** to queue several brains, or leave it off to process a single brain. Then click **run**.
+    Toggle **batch process** to queue all brains in root folder, or select the folders you want to process. Then click **run**.
     """)
     return
 
@@ -101,7 +101,7 @@ def _(mo):
     mega_root_browser = mo.ui.file_browser(
         initial_path="/bigdata/isaac/rabies_img_processing",
         selection_mode="directory",
-        multiple=False,
+        multiple=True,
         label="slide workdir root (contains brain_id folders)",
     )
     mega_root_browser
@@ -110,19 +110,32 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(Path, mega_root_browser, re):
-    # brain ids = brain-id-pattern subfolders (e.g. "129_02") of the selected
-    # workdir root; mirrors the folder mega_loop reads raw slides from.
-    mega_workdir_root = (
-        Path(mega_root_browser.path(index=0))
-        if mega_root_browser.value
-        else Path("/bigdata/isaac/rabies_img_processing")
-    )
+    # The browser (multiple=True) lets the user pick brain-id folders directly, OR
+    # a single root folder that contains brain-id subfolders. Either way we resolve
+    # the workdir root (passed to mega_loop) and the list of brain ids.
     _brain_id_pat = re.compile(r"\d+_\d+$")
-    mega_brain_ids = sorted(
-        _d.name for _d in mega_workdir_root.iterdir()
-        if _d.is_dir() and _brain_id_pat.fullmatch(_d.name)
-    )
-    return (mega_brain_ids,)
+    if mega_root_browser.value:
+        _selected = [Path(_f.path) for _f in mega_root_browser.value]
+        _as_brains = sorted({_p.name for _p in _selected
+                             if _brain_id_pat.fullmatch(_p.name)})
+        if _as_brains:
+            # selection(s) are brain-id folders -> root is their common parent
+            mega_brain_ids = _as_brains
+            mega_workdir_root = _selected[0].parent
+        else:
+            # selection is a root folder -> expand its brain-id subfolders
+            mega_workdir_root = _selected[0]
+            mega_brain_ids = sorted(
+                _d.name for _d in mega_workdir_root.iterdir()
+                if _d.is_dir() and _brain_id_pat.fullmatch(_d.name)
+            )
+    else:
+        mega_workdir_root = Path("/bigdata/isaac/rabies_img_processing")
+        mega_brain_ids = sorted(
+            _d.name for _d in mega_workdir_root.iterdir()
+            if _d.is_dir() and _brain_id_pat.fullmatch(_d.name)
+        )
+    return mega_brain_ids, mega_workdir_root
 
 
 @app.cell(hide_code=True)
@@ -136,7 +149,7 @@ def _(mega_brain_ids, mo):
     brain_id_single = mo.ui.dropdown(
         options=mega_brain_ids,
         value=mega_brain_ids[0] if mega_brain_ids else None,
-        label="brain id to process",
+        label="brain id(s) to process",
     )
     return (brain_id_single,)
 
@@ -170,6 +183,7 @@ def _(
     batch_process,
     brain_id_single,
     mega_brain_ids,
+    mega_workdir_root,
     mo,
     run_mega_button,
     tpml,
@@ -180,8 +194,8 @@ def _(
     )
     mo.stop(not _ids, mo.md("*no brain id selected — choose one and click run again*"))
     for _bid in mo.status.progress_bar(_ids, title="processing", subtitle="slide → single sections"):
-        tpml.mega_loop(_bid)
-    mo.md(f"✅ finished: **{', '.join(_ids)}**")
+        tpml.mega_loop(_bid, root=str(mega_workdir_root))
+    mo.md(f"✅ finished: **{', '.join(_ids)}** (root: `{mega_workdir_root}`)")
     return
 
 

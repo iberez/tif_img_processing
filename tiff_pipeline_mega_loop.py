@@ -42,14 +42,14 @@ from datetime import timedelta
 '''mega loop used to auto process raw microscope slide images to 
 preprocessed, autorotated, and autoaligned single section images'''
 
-def mega_loop(brain_id):
+def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
     _start_time_mega_loop =  time.perf_counter()
     #single slide all preprocessing functions
     #_brain_id = '141_02'
     _brain_id = brain_id
     _channel = 0
     #isaac's workdir for testing:
-    _WORKDIR = Path(f"/bigdata/isaac/rabies_img_processing/{str(_brain_id)}")
+    _WORKDIR = Path(f"{root}/{str(_brain_id)}")
     #main workdir, see: /bigdata/microscope_images/Lin
     #_WORKDIR = Path(f"/bigdata/microscope_images/Lin/{str(_brain_id)}")
 
@@ -156,7 +156,7 @@ def mega_loop(brain_id):
     print ('done. Entering single section processing loop...')
 
     #autoraw single section dir
-    _single_section_dir = f"/bigdata/isaac/rabies_img_processing/{_brain_id}/single_section_autoraw/"
+    _single_section_dir = f"{root}/{_brain_id}/single_section_autoraw/"
 
     _single_tiff_filenames = sorted(
         f for f in os.listdir(_single_section_dir)
@@ -165,7 +165,7 @@ def mega_loop(brain_id):
     _num_files = len(_single_tiff_filenames)
 
     #create directory to save plots,imgs, masks
-    _save_dir = f'/bigdata/isaac/rabies_img_processing/{_brain_id}/single_section_autoalign/'
+    _save_dir = f'{root}/{_brain_id}/single_section_autoalign/'
     os.makedirs(_save_dir, exist_ok=True)
 
     _start_time_all_imgs = time.perf_counter()
@@ -241,7 +241,7 @@ def mega_loop(brain_id):
                                     bridge_manifest=_bridge_manifest)
 
 
-    _plot_dir = f'/bigdata/isaac/rabies_img_processing/{_brain_id}/single_section_autoalign/plots/'
+    _plot_dir = f'{root}/{_brain_id}/single_section_autoalign/plots/'
 
     print ('stiching autoaligned output into single pdf...')
     # Find every per-section plot and parse slice/section from its filename,
