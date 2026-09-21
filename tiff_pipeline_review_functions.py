@@ -943,3 +943,73 @@ def apply_decisions(decisions, out_dir, edits=None, dry_run=True, overwrite=Fals
     if verbose:
         print(f"\n{len(written)} written, {len(skipped)} skipped: {skipped}")
     return written, skipped
+
+
+def save_review_transforms(decisions, transforms, out_dir, brain_id, slide_num,
+                           verbose=True):
+    """Carry the per-slide autoalign transforms forward with manual review edits.
+
+    Writes {out_dir}/{brain_id}_slide_{slide_num}_review_transforms.csv, which
+    contains every column from the autoalign _transforms.csv (bridge metadata,
+    crop origin, centering shift, ...) updated/extended with the manual review
+    results. Rotation is reported as three explicit columns:
+
+      auto_rot_ccw_deg    rotation applied by rotate_around_centroid (carried
+                          forward from _transforms.csv, unchanged)
+      manual_rot_ccw_deg  net rotation the reviewer applied in the GUI
+                          (buttons + sliver corrections)
+      review_rot_ccw_deg  auto_rot_ccw_deg + manual_rot_ccw_deg (mod 360) --
+                          the cumulative rotation relative to the raw slide
+
+    The reviewer's flip / status / removal bookkeeping is carried along too, so
+    this one file fully describes how to get from the raw slide to the reviewed
+    section (and, by inversion, back again).
+
+    Returns the path of the written CSV.
+    """
+    # Pull only the review-specific columns from the decisions manifest and give
+    # the net manual rotation its final name. Joining these onto the transform
+    # table (rather than reusing any transform columns already merged into
+    # `decisions`) keeps the output free of duplicate/_right columns.
+    rename = {
+        "status": "status",
+        "flip_lr": "flip_lr",
+        "rotate_ccw_deg": "manual_rot_buttons_deg",
+        "extra_rot": "manual_rot_extra_deg",
+        "review_rot_ccw_deg": "manual_rot_ccw_deg",
+        "n_removals": "n_removals",
+        "removal_px": "removal_px",
+        "unanchored_removals": "unanchored_removals",
+    }
+    _have = [c for c in rename if c in decisions.columns]
+    rev = decisions.select(["section", *_have]).rename({c: rename[c] for c in _have})
+
+    if transforms is not None and transforms.height:
+        base = transforms.drop(
+            [c for c in ("brain_id", "path") if c in transforms.columns]
+        )
+        df = base.join(rev, on="section", how="full", coalesce=True).sort("section")
+    else:
+        if verbose:
+            print("  WARNING: no autoalign transforms for this slide; "
+                  "review_rot_ccw_deg will equal manual_rot_ccw_deg (no auto term)")
+        df = rev.sort("section")
+
+    _manual = (pl.col("manual_rot_ccw_deg").fill_null(0.0)
+               if "manual_rot_ccw_deg" in df.columns else pl.lit(0.0))
+    if "auto_rot_ccw_deg" in df.columns:
+        df = df.with_columns(
+            ((pl.col("auto_rot_ccw_deg").fill_null(0.0) + _manual) % 360)
+            .round(3).alias("review_rot_ccw_deg")
+        )
+    else:
+        df = df.with_columns((_manual % 360).round(3).alias("review_rot_ccw_deg"))
+
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(
+        out_dir, f"{brain_id}_slide_{slide_num}_review_transforms.csv"
+    )
+    df.write_csv(out_path)
+    if verbose:
+        print(f"wrote {df.height} review transforms -> {out_path}")
+    return out_path
