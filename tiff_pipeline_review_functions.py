@@ -279,9 +279,26 @@ def plot_comparison(thumbs, labels, channel=0, shared_scale=True,
 # --------------------------------------------------------------------------
 
 
+def _signed_deg(a):
+    """Normalize degrees to the signed CCW+ scheme used by auto_rot_ccw_deg.
+
+    Maps any angle to (-180, 180]: counter-clockwise is positive, clockwise is
+    negative (e.g. 355 -> -5, 270 -> -90, 180 stays 180). This is a pure
+    relabelling; the rotation applied is identical modulo 360.
+    """
+    a = float(a) % 360.0
+    if a > 180.0:
+        a -= 360.0
+    return a
+
+
 def pending_angle(v):
-    """Net CCW rotation in degrees from the button counters."""
-    return (v["rot90"] + v["nudge_ccw"] - v["nudge_cw"]) % 360
+    """Net rotation in degrees from the button counters, signed CCW+.
+
+    Positive is counter-clockwise, negative is clockwise, matching
+    auto_rot_ccw_deg (so a 5 deg clockwise nudge reads as -5, not 355).
+    """
+    return _signed_deg(v["rot90"] + v["nudge_ccw"] - v["nudge_cw"])
 
 
 def rotate_display(img, angle_deg):
@@ -662,7 +679,7 @@ def collect_decisions(section_paths, controls, edits=None, brain_id=None,
                 "flip_lr": bool(v["flip_lr"]),
                 "rotate_ccw_deg": btn,
                 "extra_rot": round(extra, 3),
-                "review_rot_ccw_deg": round((btn + extra) % 360, 3),
+                "review_rot_ccw_deg": round(_signed_deg(btn + extra), 3),
                 "n_removals": len(rs),
                 "removal_px": int(sum(int(r["mask"].sum()) for r in rs)),
                 "unanchored_removals": int(sum(1 for r in rs if not np.isfinite(r["at"]))),
@@ -675,9 +692,10 @@ def collect_decisions(section_paths, controls, edits=None, brain_id=None,
         df = df.join(t, on="section", how="left")
 
     if "auto_rot_ccw_deg" in df.columns:
+        _sum = pl.col("auto_rot_ccw_deg").fill_null(0.0) + pl.col("review_rot_ccw_deg")
+        _mod = _sum % 360
         df = df.with_columns(
-            ((pl.col("auto_rot_ccw_deg").fill_null(0.0)
-              + pl.col("review_rot_ccw_deg")) % 360)
+            pl.when(_mod > 180).then(_mod - 360).otherwise(_mod)
             .round(3)
             .alias("total_rot_ccw_deg")
         )
@@ -998,12 +1016,14 @@ def save_review_transforms(decisions, transforms, out_dir, brain_id, slide_num,
     _manual = (pl.col("manual_rot_ccw_deg").fill_null(0.0)
                if "manual_rot_ccw_deg" in df.columns else pl.lit(0.0))
     if "auto_rot_ccw_deg" in df.columns:
-        df = df.with_columns(
-            ((pl.col("auto_rot_ccw_deg").fill_null(0.0) + _manual) % 360)
-            .round(3).alias("review_rot_ccw_deg")
-        )
+        _sum = pl.col("auto_rot_ccw_deg").fill_null(0.0) + _manual
     else:
-        df = df.with_columns((_manual % 360).round(3).alias("review_rot_ccw_deg"))
+        _sum = _manual
+    _mod = _sum % 360
+    df = df.with_columns(
+        pl.when(_mod > 180).then(_mod - 360).otherwise(_mod)
+        .round(3).alias("review_rot_ccw_deg")
+    )
 
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(
