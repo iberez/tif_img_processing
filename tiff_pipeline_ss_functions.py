@@ -644,6 +644,8 @@ def center_img(mask, img, initial_img, channel=0, brain_id = None, plot=True,
                 metadata={"axes": "CYX" if _centered_img.ndim == 3 else "YX"},
             )
 
+        plt.close(_fig)   # free the figure so it does not accumulate across sections
+
     if return_transform:
         # Pure translation by (shift_x, shift_y), in canvas pixel coords.
         # Invert by translating (-shift_x, -shift_y).

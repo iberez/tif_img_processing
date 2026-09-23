@@ -16,6 +16,7 @@ from skimage.transform import downscale_local_mean
 from scipy import ndimage as ndi
 from skimage.filters import threshold_otsu, threshold_triangle, threshold_li
 import os
+import gc
 import time
 import re
 import glob
@@ -111,6 +112,13 @@ def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
                                                         subdir="bridge_inputs",  # NEW: subdirectory name inside slide_out_folder)
                                              )
 
+        #close any open figures out of precaution
+        plt.close("all")
+        del _down_area, _cleaned, _artifact_mask, _foreground, _tissue_mask
+        del _repaired, _crack_stats, _separated, _split_stats
+        del _final, _final_mask, _dewhiskered, _dewhiskered_mask
+        gc.collect()
+
         _end_time_l1 = time.perf_counter()
         _execution_time_l1 = _end_time_l1 - _start_time_l1
         _execution_time_l1_fmt = timedelta(seconds = _execution_time_l1)
@@ -168,6 +176,10 @@ def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
             scale_x=_meta["scale_x"],
         ))
     _bridge_manifest = pl.concat(_manifests)
+    # The per-slide label masks/inventories are no longer needed once the raw
+    # crops are written; drop them so they are not held through autoalignment.
+    del _slide_inputs, _inv_dfs, _manifests
+    gc.collect()
     mo.output.append(mo.md("✅ **extracting single sections** — Done"))
     print ('done. Entering single section processing loop...')
 
@@ -241,6 +253,14 @@ def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
         })
 
 
+        # Release this section's arrays and the center_img() figure (plot=True
+        # is not closed by the function) before the next section.
+        plt.close("all")
+        del _initial, _initial_mask, _res, _mirror_angle
+        del _rotated_centroid, _rotated_centroid_mask, _rot_tf
+        del _centered_img, _centered_mask, _ctr_tf
+        gc.collect()
+
         _end_time_l2 = time.perf_counter()
         _execution_time_l2 = _end_time_l2 - _start_time_l2
         _execution_time_l2_fmt = timedelta(seconds = _execution_time_l2)
@@ -311,6 +331,10 @@ def mega_loop(brain_id, root="/bigdata/isaac/rabies_img_processing"):
         _writer.write(_out_f)
 
     print(f"done. stitched {len(_pdf_entries)} plot(s) -> {_combined_path}")
+
+    # Final sweep so nothing carries over to the next brain in a batch run.
+    plt.close("all")
+    gc.collect()
 
     _end_time_mega_loop =  time.perf_counter()
 

@@ -546,7 +546,8 @@ def plot_pp_steps(dewhiskered, dewhiskered_mask, tissue_mask, artifact_mask, fin
     plt.tight_layout()
     if savefig:
         plt.savefig(f'{slide_out_folder}{slide_name}_preprocessed_all_steps.png')
-    return plt.gca()
+    plt.close(_fig)          # free the figure so it does not accumulate across slides
+    return None
 
 # Annotation/QC, with bridge inputs
 def annotate_sections(
@@ -690,6 +691,7 @@ def annotate_sections(
             _ax.axis("off")
             _ax.set_title("section numbering")
             plt.savefig(Path(slide_out_folder) / f"{slide_name}_preprocessed_overview.png")
+            plt.close(_fig)   # free the figure so it does not accumulate across slides
 
         if save_outputs:
             _write_outputs(numbered, sections)
