@@ -267,6 +267,14 @@ def _(brain_select, mo, os, re, review_root_dir):
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Slide Review
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _(mo, slide_ids_r):
     slide_select = mo.ui.dropdown(options=slide_ids_r, value=slide_ids_r[0], label="slide to review")
     slide_select
@@ -300,10 +308,17 @@ def _(brain_id_r, loaded_section_paths, loaded_thumbs, mo, slide_select, tprf):
     return review_controls, section_paths, slide_num_r, thumbs
 
 
+@app.cell
+def _(edit_state, review_controls, section_paths, thumbs, tprf):
+    tprf.render_review_grid(thumbs, section_paths, review_controls, edits=edit_state(),channel=0)
+
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## render section
+    ## Section Review
     """)
     return
 
@@ -388,19 +403,11 @@ def _(canvas_r, edit_state, focus, mo, review_controls, set_edit_state, tprf):
 
 
 @app.cell
-def _(edit_state, review_controls, section_paths, thumbs, tprf):
-    tprf.render_review_grid(thumbs, section_paths, review_controls, edits=edit_state(),channel=0)
-    return
-
-
-@app.cell
-def _(brain_id_r, os, review_root_dir, slide_num_r):
+def _(brain_id_r, os, review_root_dir):
     review_root = os.path.join(str(review_root_dir), brain_id_r, "single_section_review")
     applied_dir = os.path.join(review_root, "imgs")
-    manifest_path = os.path.join(
-        review_root, f"{brain_id_r}_slide_{slide_num_r}_review.csv"
-    )
-    return applied_dir, manifest_path
+    review_transforms_dir = os.path.join(review_root, "review_transforms")
+    return applied_dir, review_transforms_dir
 
 
 @app.cell
@@ -408,16 +415,20 @@ def _(
     brain_id_r,
     edit_state,
     review_controls,
+    review_root_dir,
     section_paths,
     slide_num_r,
     tprf,
 ):
+    transforms_df = tprf.load_slide_transforms(brain_id_r, slide_num_r,
+                                               root=str(review_root_dir))
     decisions = tprf.collect_decisions(
             section_paths, review_controls, edits=edit_state(),
             brain_id=brain_id_r, slide_num=slide_num_r,
+            transforms=transforms_df,
         )
     decisions
-    return (decisions,)
+    return decisions, transforms_df
 
 
 @app.cell
@@ -443,9 +454,21 @@ def _(mo):
 
 
 @app.cell
-def _(decisions, manifest_path, mo, save_manifest_button, tprf):
+def _(
+    brain_id_r,
+    decisions,
+    mo,
+    review_transforms_dir,
+    save_manifest_button,
+    slide_num_r,
+    tprf,
+    transforms_df,
+):
     mo.stop(not save_manifest_button.value, mo.md("*manifest not saved*"))
-    tprf.save_decisions(decisions, manifest_path)
+    _review_tf_path = tprf.save_review_transforms(
+        decisions, transforms_df, review_transforms_dir, brain_id_r, slide_num_r
+    )
+    mo.md(f"saved review transforms → `{_review_tf_path}`")
     return
 
 
@@ -477,17 +500,22 @@ def _(mo):
 def _(
     applied_dir,
     apply_button,
+    brain_id_r,
     decisions,
     edit_state,
-    manifest_path,
     mo,
+    review_transforms_dir,
+    slide_num_r,
     tprf,
+    transforms_df,
 ):
     mo.stop(not apply_button.value, mo.md("*no files written*"))
     written, skipped = tprf.apply_decisions(
         decisions, applied_dir, edits=edit_state(), dry_run=False, overwrite=False, verbose=True
     )
-    tprf.save_decisions(decisions, manifest_path)
+    tprf.save_review_transforms(
+        decisions, transforms_df, review_transforms_dir, brain_id_r, slide_num_r
+    )
     mo.md(f"wrote **{len(written)}** · skipped **{len(skipped)}**")
     return
 
