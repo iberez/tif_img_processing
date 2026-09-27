@@ -43,7 +43,7 @@ def _():
 
     from datetime import timedelta
 
-    return Path, mo, os, pl, re
+    return Path, mo, np, os, pl, re
 
 
 @app.cell
@@ -311,7 +311,6 @@ def _(brain_id_r, loaded_section_paths, loaded_thumbs, mo, slide_select, tprf):
 @app.cell
 def _(edit_state, review_controls, section_paths, thumbs, tprf):
     tprf.render_review_grid(thumbs, section_paths, review_controls, edits=edit_state(),channel=0)
-
     return
 
 
@@ -353,20 +352,59 @@ def _(edit_state, focus, mo, os, review_controls, section_paths, thumbs, tprf):
     )
     canvas_r = mo.ui.matplotlib(_ax, debounce=True)
     mo.vstack([
-        mo.md("drag = box · **shift**+drag = lasso"),
+        mo.md(
+            "**remove selection** — hold **shift** and drag a **lasso** around the region "
+            "to cut (a plain box drag also works)  \n"
+            "**draw sym line** — hold **shift** and drag a straight stroke between the two "
+            "midline points; the line through those points sets the symmetry axis"
+        ),
         canvas_r,
     ])
     return (canvas_r,)
 
 
 @app.cell
-def _(canvas_r, edit_state, focus, mo, review_controls, set_edit_state, tprf):
+def _(
+    canvas_r,
+    edit_state,
+    focus,
+    mo,
+    np,
+    review_controls,
+    set_edit_state,
+    tprf,
+):
     _armed = bool(canvas_r.value)
+
+
+    def _line_angle_from_selection(sel):
+        """CCW degrees to bring the line drawn between two points to vertical.
+
+        The user shift+drags a straight stroke from one midline point to the other.
+        The stroke is a lasso path; we fit its principal axis (the straight line
+        connecting the endpoints) and return the rotation that makes it vertical.
+        """
+        _verts = getattr(sel, "vertices", None)
+        if not _verts or len(_verts) < 2:
+            return None, "shift+drag a straight stroke between the two midline points"
+        _pts = np.asarray(_verts, dtype=float)
+        _c = _pts - _pts.mean(axis=0)
+        _, _s, _vt = np.linalg.svd(_c, full_matrices=False)
+        _vx, _vy = float(_vt[0, 0]), float(_vt[0, 1])
+        _len = float(np.ptp(_c @ np.array([_vx, _vy])))
+        if _len < 5:
+            return None, "line too short — drag between two points across the midline"
+        # image y points down, so negate it for a standard math-coords angle
+        _phi = np.degrees(np.arctan2(-_vy, _vx))
+        _theta = (90.0 - _phi) % 180.0
+        if _theta > 90.0:
+            _theta -= 180.0
+        return _theta, f"line {_len:.0f}px \u00b7 rotate {_theta:+.2f}\u00b0 CCW"
+
 
     def _do_line(_):
         _i = focus.value
-        _m = tprf.selection_to_mask(canvas_r.value, canvas_r.axes.images[0].get_array().shape)
-        _ang, _msg = tprf.midline_angle_from_mask(_m)
+        _ang, _msg = _line_angle_from_selection(canvas_r.value)
         print(_msg)
         if _ang is None:
             return
@@ -377,11 +415,12 @@ def _(canvas_r, edit_state, focus, mo, review_controls, set_edit_state, tprf):
         _e[_i] = _cur
         set_edit_state(_e)
 
+
     def _do_remove(_):
         _i = focus.value
         _m = tprf.selection_to_mask(canvas_r.value, canvas_r.axes.images[0].get_array().shape)
         if _m.sum() == 0:
-            print("empty selection")
+            print("empty selection \u2014 shift+drag a lasso around the region to cut")
             return
         _e = dict(edit_state())
         _cur = dict(_e[_i])
@@ -390,15 +429,39 @@ def _(canvas_r, edit_state, focus, mo, review_controls, set_edit_state, tprf):
         set_edit_state(_e)
         print(f"removed {int(_m.sum())} thumbnail px")
 
+
+    def _do_undo(_):
+        _i = focus.value
+        _e = dict(edit_state())
+        _cur = dict(_e[_i])
+        if not _cur["removals"]:
+            print("nothing to undo")
+            return
+        _last = _cur["removals"][-1]
+        _cur["removals"] = _cur["removals"][:-1]
+        _e[_i] = _cur
+        set_edit_state(_e)
+        print(f"undid last selection ({int(np.asarray(_last).sum())} px) \u2014 "
+              f"{len(_cur['removals'])} removal(s) left")
+
+
     draw_sym_line = mo.ui.button(
         label="draw sym line", kind="warn" if _armed else "neutral",
         on_change=_do_line,
     )
     remove_selection = mo.ui.button(
-        label="remove selection", kind="warn" if _armed else "neutral",
+        label="remove selection (lasso)", kind="warn" if _armed else "neutral",
         on_change=_do_remove,
     )
-    mo.hstack([draw_sym_line, remove_selection], justify="start", gap=0.5)
+    undo_selection = mo.ui.button(
+        label="undo selection", kind="neutral",
+        on_change=_do_undo,
+    )
+    mo.vstack([
+        mo.hstack([draw_sym_line, remove_selection, undo_selection],
+                  justify="start", gap=0.5),
+        mo.md("[\u2191 back to Slide Review](#slide-review)"),
+    ])
     return
 
 
