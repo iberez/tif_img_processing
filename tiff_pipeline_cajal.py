@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.25.0"
 app = marimo.App(width="medium")
 
 
@@ -1366,22 +1366,110 @@ def _(mo):
 
 @app.cell
 def _(mo, np, tifffile):
-    _check_tiff_props_enable = False
+    _check_tiff_props_enable = True
     #single slide all preprocessing functions
     mo.stop(_check_tiff_props_enable is False, mo.md("_check_tiff_props_enable disabled (`_check_tiff_props_enable` is False)*"))
 
 
-    python_section_path = '/bigdata/isaac/rabies_img_processing/129_02/imgs/129_02_img_slice_S001_section_1.tiff'
-    matlab_section_path = '/bigdata/isaac/rabies_img_processing/129_02/imgs/S010.tif_section_1_f.tiff'
+    _python_section_path = '/bigdata/isaac/rabies_img_processing/140_02/S011.tif'
+    _python_section_path_1 = '/bigdata/isaac/rabies_img_processing/141_02/S011.tif'
+    _python_section_path_2 = '/bigdata/isaac/rabies_img_processing/137_02/S011.tif'
+    _python_section_path_3 = '/bigdata/isaac/rabies_img_processing/141_03/S011.tif'
 
-    for _p in [python_section_path, matlab_section_path]:
+    for _p in [_python_section_path, _python_section_path_1,_python_section_path_2,_python_section_path_3]:
         _a = tifffile.imread(_p)
-        print(_p, _a.dtype, _a.min(), _a.max(), np.percentile(_a[_a>0], 99.9))
-    return matlab_section_path, python_section_path
+        print(_p, _a.shape,_a.dtype, _a.min(), _a.max(), np.percentile(_a[_a>0], 99.9))
+    return
 
 
 @app.cell
-def _(matlab_section_path, np, python_section_path, tifffile):
+def _(mo, np, tifffile):
+    _check_tiff_props_enable = True
+    #single slide all preprocessing functions
+    mo.stop(_check_tiff_props_enable is False, mo.md("_check_tiff_props_enable disabled (`_check_tiff_props_enable` is False)*"))
+
+
+    _python_section_path = '/bigdata/isaac/rabies_img_processing/140_02/single_section_autoraw/S012.tif_section_10.tiff'
+    _python_section_path_1 = '/bigdata/isaac/rabies_img_processing/141_02/single_section_autoraw/S011.tif_section_11.tiff'
+    _python_section_path_2 = '/bigdata/isaac/rabies_img_processing/137_02/single_section_autoraw/S011.tif_section_11.tiff'
+    _python_section_path_3 = '/bigdata/isaac/rabies_img_processing/141_03/single_section_autoraw/S011.tif_section_11.tiff'
+
+    for _p in [_python_section_path, _python_section_path_1,_python_section_path_2,_python_section_path_3]:
+        _a = tifffile.imread(_p)
+        print(_p, _a.shape,_a.dtype, _a.min(), _a.max(), np.percentile(_a[_a>0], 99.9))
+    return
+
+
+@app.cell
+def _(os, pl, plt, tifffile):
+    # Inventory single-section dimensions across brains, then plot size distributions.
+    _brain_ids_size = ['140_02', '141_02', '137_02', '141_03']
+
+    _size_rows = []
+    for _bid in _brain_ids_size:
+        _autoraw_dir = f"/bigdata/isaac/rabies_img_processing/{_bid}/single_section_autoraw/"
+        if not os.path.isdir(_autoraw_dir):
+            print(f"missing dir: {_autoraw_dir}")
+            continue
+        _files = sorted(f for f in os.listdir(_autoraw_dir) if f.endswith(".tiff"))
+        for _fn in _files:
+            _fp = os.path.join(_autoraw_dir, _fn)
+            # Header-only read: get shape without loading pixels, then close immediately.
+            with tifffile.TiffFile(_fp) as _tf:
+                _shape = tuple(int(_d) for _d in _tf.series[0].shape)
+            # shape is (C, Y, X) for multichannel or (Y, X) for single channel
+            if len(_shape) == 3:
+                _y, _x = _shape[1], _shape[2]
+            else:
+                _y, _x = _shape[0], _shape[1]
+            _size_rows.append({
+                "brain_id": _bid,
+                "filename": _fn,
+                "shape": str(_shape),
+                "height_y": _y,
+                "width_x": _x,
+            })
+
+    section_sizes_df = pl.DataFrame(_size_rows)
+    print(f"collected {section_sizes_df.height} sections across {len(_brain_ids_size)} brains")
+
+    _present_brains = [b for b in _brain_ids_size
+                      if section_sizes_df.filter(pl.col("brain_id") == b).height > 0]
+    _n = len(_present_brains)
+    _fig_sz, _ax_sz = plt.subplots(_n, 1, figsize=(10, 4 * _n), squeeze=False)
+    _ax_sz = _ax_sz.ravel()
+
+    for _k, _bid in enumerate(_present_brains):
+        _sub = section_sizes_df.filter(pl.col("brain_id") == _bid)
+        _xw = _sub["width_x"].to_numpy()
+        _yh = _sub["height_y"].to_numpy()
+        _mx, _sx = float(_xw.mean()), float(_xw.std())
+        _my, _sy = float(_yh.mean()), float(_yh.std())
+
+        _a = _ax_sz[_k]
+        _a.hist(_xw, bins=200, alpha=0.6, color="tab:blue", label="width (x)")
+        _a.hist(_yh, bins=200, alpha=0.6, color="tab:orange", label="height (y)")
+        _a.set_title(f"{_bid}  (n={_sub.height})")
+        _a.set_xlabel("size (px)")
+        _a.set_ylabel("count")
+        _a.legend(loc="upper right")
+
+        _txt = (f"mean (x, y) = ({_mx:.0f}, {_my:.0f})\n"
+                f"std x = {_sx:.0f}\nstd y = {_sy:.0f}")
+        _a.annotate(_txt, xy=(0.02, 0.97), xycoords="axes fraction",
+                    va="top", ha="left", fontsize=10,
+                    bbox=dict(boxstyle="round", fc="white", ec="gray", alpha=0.85))
+
+    plt.tight_layout()
+    plt.gca()
+    return
+
+
+@app.cell
+def _(matlab_section_path, mo, np, python_section_path, tifffile):
+    _check_tiff_props_2_enable = False
+    mo.stop(_check_tiff_props_2_enable is False, mo.md("_check_tiff_probs_2_enable disabled (`_check_tiff_probs_2_enable` is False)*"))
+
     _qs = [1, 25, 50, 75, 90, 99, 99.9, 99.99]
     for _name, _p in {"python": python_section_path, "matlab": matlab_section_path}.items():
         _a = tifffile.imread(_p)
@@ -1419,10 +1507,10 @@ def _():
 
 @app.cell
 def _(mo, tpml):
-    _enable_mega_loop = False
+    _enable_mega_loop = True
     mo.stop(_enable_mega_loop is not True, mo.md("*mega loop disabled (`_enable_mega_loop` is not True)*"))
 
-    _brain_ids_to_process = ['129_02']#['140_01','141_03','137_02','137_04']
+    _brain_ids_to_process = ['140_02']#['140_01','141_03','137_02','137_04']
     for _brain_id in _brain_ids_to_process:
         tpml.mega_loop(_brain_id)
     return
@@ -1454,7 +1542,7 @@ def _(mo):
 
 @app.cell
 def _(tprf):
-    brain_id_r = '140_01'
+    brain_id_r = '141_03'
     slide_num_r = 'S001'
     section_paths = tprf.find_section_paths(brain_id_r,slide_num_r)
     review_controls = tprf.build_review_controls(len(section_paths))
