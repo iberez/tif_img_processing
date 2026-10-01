@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.25.0"
 app = marimo.App(width="medium")
 
 
@@ -344,9 +344,10 @@ def _(mo, os, section_paths):
 def _(edit_state, focus, mo, os, review_controls, section_paths, thumbs, tprf):
     _i = focus.value
     _v = review_controls.value[_i]
+    _flip = bool(_v["flip_lr"]) ^ bool(edit_state()[_i].get("flip_lr", False))
     _fig, _ax = tprf.build_edit_canvas(
         tprf._as_display(thumbs[_i], 0),
-        tprf.pending_angle(_v), _v["flip_lr"],
+        tprf.pending_angle(_v), _flip,
         edit_state()[_i],
         title=os.path.basename(section_paths[_i]),
     )
@@ -360,6 +361,7 @@ def _(edit_state, focus, mo, os, review_controls, section_paths, thumbs, tprf):
         ),
         canvas_r,
     ])
+
     return (canvas_r,)
 
 
@@ -445,6 +447,16 @@ def _(
               f"{len(_cur['removals'])} removal(s) left")
 
 
+    def _do_flip(_):
+        _i = focus.value
+        _e = dict(edit_state())
+        _cur = dict(_e[_i])
+        _cur["flip_lr"] = not _cur.get("flip_lr", False)
+        _e[_i] = _cur
+        set_edit_state(_e)
+        print(f"section {_i + 1} flip L/R: {_cur['flip_lr']}")
+
+
     draw_sym_line = mo.ui.button(
         label="draw sym line", kind="warn" if _armed else "neutral",
         on_change=_do_line,
@@ -457,11 +469,16 @@ def _(
         label="undo selection", kind="neutral",
         on_change=_do_undo,
     )
+    flip_lr_r = mo.ui.button(
+        label="flip L/R", kind="neutral",
+        on_change=_do_flip,
+    )
     mo.vstack([
-        mo.hstack([draw_sym_line, remove_selection, undo_selection],
+        mo.hstack([draw_sym_line, remove_selection, undo_selection, flip_lr_r],
                   justify="start", gap=0.5),
         mo.md("[\u2191 back to Slide Review](#slide-review)"),
     ])
+
     return
 
 
@@ -477,6 +494,7 @@ def _(brain_id_r, os, review_root_dir):
 def _(
     brain_id_r,
     edit_state,
+    pl,
     review_controls,
     review_root_dir,
     section_paths,
@@ -490,7 +508,16 @@ def _(
             brain_id=brain_id_r, slide_num=slide_num_r,
             transforms=transforms_df,
         )
+    # Fold the Section Review flip (edit_state) into the grid flip (controls) so
+    # the canvas, apply_decisions, and save_review_transforms all agree.
+    _edit_flip = [bool(edit_state().get(i, {}).get("flip_lr", False))
+                  for i in decisions["idx"].to_list()]
+    decisions = decisions.with_columns(pl.Series("_edit_flip", _edit_flip))
+    decisions = decisions.with_columns(
+        (pl.col("flip_lr") ^ pl.col("_edit_flip")).alias("flip_lr")
+    ).drop("_edit_flip")
     decisions
+
     return decisions, transforms_df
 
 
@@ -555,7 +582,11 @@ def _(mo):
     apply_button = mo.ui.run_button(
         label="⚠ WRITE full-resolution TIFFs", kind="neutral"
     )
-    apply_button
+    mo.vstack([
+        apply_button,
+        mo.md("[\u2191 back to Slide Review](#slide-review)"),
+    ])
+
     return (apply_button,)
 
 
