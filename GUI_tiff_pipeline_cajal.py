@@ -90,7 +90,7 @@ def _():
 def _(Path, os):
     # The shared launcher sets this to each colleague's folder; it's unset in
     # your own dev sessions, so your usual default still applies.
-    data_root = Path(os.environ.get("MICROSCOPY_DATA_DIR", "/bigdata/microscope_images/Lin"))
+    data_root = Path(os.environ.get("MICROSCOPY_DATA_DIR", "/bigdata"))
     return (data_root,)
 
 

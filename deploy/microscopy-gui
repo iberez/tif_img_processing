@@ -2,7 +2,7 @@
 # microscopy-gui -- run the TIFF pipeline GUI on this server, as YOU.
 #
 #   microscopy-gui [DATA_ROOT]   start the GUI. DATA_ROOT = folder holding your
-#                                brain-id folders (default /bigdata/microscope_images/Lin)
+#                                brain-id folders (default /bigdata)
 #   microscopy-gui --setup       print the one-time setup for your own computer
 #
 # Overrides: MICROSCOPY_GUI_PORT  (default: derived from your user id)
@@ -18,7 +18,7 @@ SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 APP="$(dirname "$(dirname "$SELF")")"
 ROOT="$(dirname "$(dirname "$APP")")"
 NOTEBOOK="$APP/GUI_tiff_pipeline_cajal.py"
-DEFAULT_DATA_ROOT="/bigdata/microscope_images/Lin"   # where the file browsers start
+DEFAULT_DATA_ROOT="/bigdata"   # where the file browsers start
 ENV="$(readlink -f "$APP/env" 2>/dev/null || true)"
 VERSION="$(cat "$APP/VERSION" 2>/dev/null || echo "unknown version")"
 
