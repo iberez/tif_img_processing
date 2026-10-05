@@ -8,7 +8,9 @@
 # Overrides: MICROSCOPY_GUI_PORT  (default: derived from your user id)
 #            MICROSCOPY_GUI_TTL   (seconds a run survives a dropped browser; default 3600)
 
-set -euo pipefail
+set -eEuo pipefail
+on_err() { echo "microscopy-gui: unexpected failure at line $1 -- send this message to the maintainer" >&2; }
+trap 'on_err $LINENO' ERR
 
 # This script lives inside a release and pins itself to it: a redeploy never
 # swaps code underneath a GUI that is already running.
@@ -89,8 +91,8 @@ DATA_ROOT="${1:-}"
 if [[ -z "$DATA_ROOT" ]]; then
     if [[ -d "/bigdata/$ME" ]]; then DATA_ROOT="/bigdata/$ME"; else DATA_ROOT="$HOME"; fi
 fi
-DATA_ROOT="$(readlink -f "$DATA_ROOT")"
-[[ -d "$DATA_ROOT" && -r "$DATA_ROOT" ]] || die "can't read folder: $DATA_ROOT"
+DATA_ROOT="$(readlink -f "$DATA_ROOT" || echo "$DATA_ROOT")"
+[[ -d "$DATA_ROOT" && -r "$DATA_ROOT" && -x "$DATA_ROOT" ]] || die "can't open folder: $DATA_ROOT"
 
 # Port free? SO_REUSEADDR mirrors the server, so a just-closed port isn't a false alarm.
 if ! "$ENV/bin/python" - "$PORT" << 'PY'
@@ -117,11 +119,15 @@ export PATH="$ENV/bin:$PATH"
 export CONDA_PREFIX="$ENV"
 export PYTHONPATH="$APP"
 export PYTHONNOUSERSITE=1
-set +u
+# Conda's activation scripts aren't written for `set -e` (a trailing
+# `[ ... ] && export ...` returns 1), so run them with error handling paused.
+trap - ERR
+set +eu
 for _f in "$ENV"/etc/conda/activate.d/*.sh; do
     if [[ -r "$_f" ]]; then source "$_f"; fi
 done
-set -u
+set -eu
+trap 'on_err $LINENO' ERR
 
 # Read by the notebook.
 export MICROSCOPY_DATA_DIR="$DATA_ROOT"
