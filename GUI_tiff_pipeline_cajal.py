@@ -86,6 +86,14 @@ def _():
     return (tpml,)
 
 
+@app.cell
+def _(Path, os):
+    # The shared launcher sets this to each colleague's folder; it's unset in
+    # your own dev sessions, so your usual default still applies.
+    data_root = Path(os.environ.get("MICROSCOPY_DATA_DIR", "/bigdata/microscope_images/Lin"))
+    return (data_root,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -96,10 +104,10 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _(data_root, mo):
     # browse to a root folder that contains one subfolder per brain id
     mega_root_browser = mo.ui.file_browser(
-        initial_path="/bigdata/isaac/rabies_img_processing",
+        initial_path=str(data_root), #"/bigdata/isaac/rabies_img_processing",
         selection_mode="directory",
         multiple=True,
         label="slide workdir root (contains brain_id folders)",
@@ -109,7 +117,7 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(Path, mega_root_browser, re):
+def _(Path, data_root, mega_root_browser, re):
     # The browser (multiple=True) lets the user pick brain-id folders directly, OR
     # a single root folder that contains brain-id subfolders. Either way we resolve
     # the workdir root (passed to mega_loop) and the list of brain ids.
@@ -130,7 +138,7 @@ def _(Path, mega_root_browser, re):
                 if _d.is_dir() and _brain_id_pat.fullmatch(_d.name)
             )
     else:
-        mega_workdir_root = Path("/bigdata/isaac/rabies_img_processing")
+        mega_workdir_root = data_root#Path("/bigdata/isaac/rabies_img_processing")
         mega_brain_ids = sorted(
             _d.name for _d in mega_workdir_root.iterdir()
             if _d.is_dir() and _brain_id_pat.fullmatch(_d.name)
@@ -185,14 +193,23 @@ def _(
     mega_brain_ids,
     mega_workdir_root,
     mo,
+    os,
     run_mega_button,
     tpml,
 ):
     mo.stop(not run_mega_button.value, mo.md("*select brain id(s) above, then click run*"))
+
     _ids = list(mega_brain_ids) if batch_process.value else (
         [brain_id_single.value] if brain_id_single.value else []
     )
     mo.stop(not _ids, mo.md("*no brain id selected — choose one and click run again*"))
+
+    _blocked = [_b for _b in _ids if not os.access(mega_workdir_root / _b, os.W_OK)]
+    mo.stop(
+        bool(_blocked),
+        mo.md("⛔ no write permission for " + ", ".join(f"`{_b}`" for _b in _blocked)
+              + " — outputs are written inside each brain folder"),
+    )
     for _bid in mo.status.progress_bar(_ids, title="processing", subtitle="slide → single sections"):
         tpml.mega_loop(_bid, root=str(mega_workdir_root))
     mo.md(f"✅ finished: **{', '.join(_ids)}** (root: `{mega_workdir_root}`)")
@@ -224,11 +241,11 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _(data_root, mo):
     # browse to the review root folder (contains brain_id folders with
     # single_section_autoalign/imgs output)
     review_root_browser = mo.ui.file_browser(
-        initial_path="/bigdata/isaac/rabies_img_processing",
+        initial_path=str(data_root), #"/bigdata/isaac/rabies_img_processing",
         selection_mode="directory",
         multiple=False,
         label="review root (contains brain_id folders)",
@@ -238,11 +255,11 @@ def _(mo):
 
 
 @app.cell
-def _(Path, mo, review_root_browser):
+def _(Path, data_root, mo, review_root_browser):
     review_root_dir = (
         Path(review_root_browser.path(index=0))
         if review_root_browser.value
-        else Path("/bigdata/isaac/rabies_img_processing")
+        else data_root#Path("/bigdata/isaac/rabies_img_processing")
     )
     review_brain_ids = sorted(
         _d.name for _d in review_root_dir.iterdir()
@@ -282,11 +299,11 @@ def _(mo, slide_ids_r):
 
 
 @app.cell(hide_code=True)
-def _(brain_id_r, load_all_slides, slide_ids_r, tprf):
+def _(brain_id_r, load_all_slides, review_root_dir, slide_ids_r, tprf):
     # 'load all slides' preloads every slide's thumbnails once; otherwise only the
     # selected slide is loaded on demand.
     if load_all_slides.value:
-        loaded_section_paths = {_s: tprf.find_section_paths(brain_id_r, _s) for _s in slide_ids_r}
+        loaded_section_paths = {_s: tprf.find_section_paths(brain_id_r, _s, root = str(review_root_dir)) for _s in slide_ids_r}
         loaded_thumbs = {_s: tprf.load_review_thumbs(_p, verbose=False)
                          for _s, _p in loaded_section_paths.items()}
     else:
@@ -295,14 +312,22 @@ def _(brain_id_r, load_all_slides, slide_ids_r, tprf):
 
 
 @app.cell(hide_code=True)
-def _(brain_id_r, loaded_section_paths, loaded_thumbs, mo, slide_select, tprf):
+def _(
+    brain_id_r,
+    loaded_section_paths,
+    loaded_thumbs,
+    mo,
+    review_root_dir,
+    slide_select,
+    tprf,
+):
     mo.stop(slide_select.value is None, mo.md("*select a slide*"))
     slide_num_r = slide_select.value
     if loaded_thumbs is not None:
         section_paths = loaded_section_paths[slide_num_r]
         thumbs = loaded_thumbs[slide_num_r]
     else:
-        section_paths = tprf.find_section_paths(brain_id_r, slide_num_r)
+        section_paths = tprf.find_section_paths(brain_id_r, slide_num_r, root = str(review_root_dir))
         thumbs = tprf.load_review_thumbs(section_paths, verbose=False)
     review_controls = tprf.build_review_controls(len(section_paths))
     return review_controls, section_paths, slide_num_r, thumbs
@@ -361,7 +386,6 @@ def _(edit_state, focus, mo, os, review_controls, section_paths, thumbs, tprf):
         ),
         canvas_r,
     ])
-
     return (canvas_r,)
 
 
@@ -478,7 +502,6 @@ def _(
                   justify="start", gap=0.5),
         mo.md("[\u2191 back to Slide Review](#slide-review)"),
     ])
-
     return
 
 
@@ -517,7 +540,6 @@ def _(
         (pl.col("flip_lr") ^ pl.col("_edit_flip")).alias("flip_lr")
     ).drop("_edit_flip")
     decisions
-
     return decisions, transforms_df
 
 
@@ -586,7 +608,6 @@ def _(mo):
         apply_button,
         mo.md("[\u2191 back to Slide Review](#slide-review)"),
     ])
-
     return (apply_button,)
 
 
