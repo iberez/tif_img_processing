@@ -2,7 +2,7 @@
 # microscopy-gui -- run the TIFF pipeline GUI on this server, as YOU.
 #
 #   microscopy-gui [DATA_ROOT]   start the GUI. DATA_ROOT = folder holding your
-#                                brain-id folders (default /bigdata/$USER, else ~)
+#                                brain-id folders (default /bigdata/microscope_images/Lin)
 #   microscopy-gui --setup       print the one-time setup for your own computer
 #
 # Overrides: MICROSCOPY_GUI_PORT  (default: derived from your user id)
@@ -18,6 +18,7 @@ SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 APP="$(dirname "$(dirname "$SELF")")"
 ROOT="$(dirname "$(dirname "$APP")")"
 NOTEBOOK="$APP/GUI_tiff_pipeline_cajal.py"
+DEFAULT_DATA_ROOT="/bigdata/microscope_images/Lin"   # where the file browsers start
 ENV="$(readlink -f "$APP/env" 2>/dev/null || true)"
 VERSION="$(cat "$APP/VERSION" 2>/dev/null || echo "unknown version")"
 
@@ -45,7 +46,7 @@ print_setup() {
     local server
     server="$(awk '{print $3}' <<< "${SSH_CONNECTION:-}")"
     server="${server:-$(hostname -f)}"
-    sed -e "s|@PORT@|$PORT|g" -e "s|@TARGET@|$ME@$server|g" \
+    sed -e "s|@PORT@|$PORT|g" -e "s|@TARGET@|$ME@$server|g" -e "s|@DEFAULT@|$DEFAULT_DATA_ROOT|g" \
         -e "s|@LAUNCHER@|$ROOT/bin/microscopy-gui|g" -e "s|@URL@|$URL|g" << 'SETUP'
 
 Your GUI port on this server is @PORT@.
@@ -74,6 +75,7 @@ microscopy-gui() {
 }
 
 Usage: microscopy-gui [folder containing your brain-id folders]
+       (default: @DEFAULT@)
 If you normally reach this server by another name or address, use that instead
 of the part after the @ above.
 
@@ -87,12 +89,18 @@ case "${1:-}" in
 esac
 
 # Where the file browsers start; users can still navigate anywhere they can read.
-DATA_ROOT="${1:-}"
-if [[ -z "$DATA_ROOT" ]]; then
-    if [[ -d "/bigdata/$ME" ]]; then DATA_ROOT="/bigdata/$ME"; else DATA_ROOT="$HOME"; fi
+# A folder given on the command line must be usable; if the default isn't
+# (no access yet), start in ~ rather than refusing to launch.
+can_open() { [[ -d "$1" && -r "$1" && -x "$1" ]]; }
+if [[ -n "${1:-}" ]]; then
+    DATA_ROOT="$(readlink -f "$1" || echo "$1")"
+    can_open "$DATA_ROOT" || die "can't open folder: $DATA_ROOT"
+elif can_open "$DEFAULT_DATA_ROOT"; then
+    DATA_ROOT="$DEFAULT_DATA_ROOT"
+else
+    echo "microscopy-gui: no access to $DEFAULT_DATA_ROOT -- starting in your home folder" >&2
+    DATA_ROOT="$HOME"
 fi
-DATA_ROOT="$(readlink -f "$DATA_ROOT" || echo "$DATA_ROOT")"
-[[ -d "$DATA_ROOT" && -r "$DATA_ROOT" && -x "$DATA_ROOT" ]] || die "can't open folder: $DATA_ROOT"
 
 # Port free? SO_REUSEADDR mirrors the server, so a just-closed port isn't a false alarm.
 if ! "$ENV/bin/python" - "$PORT" << 'PY'
