@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# microscopy-gui -- run the TIFF pipeline GUI on this server, as YOU.
+#
+#   microscopy-gui [DATA_ROOT]   start the GUI. DATA_ROOT = folder holding your
+#                                brain-id folders (default /bigdata/$USER, else ~)
+#   microscopy-gui --setup       print the one-time setup for your own computer
+#
+# Overrides: MICROSCOPY_GUI_PORT  (default: derived from your user id)
+#            MICROSCOPY_GUI_TTL   (seconds a run survives a dropped browser; default 3600)
+
+set -euo pipefail
+
+# This script lives inside a release and pins itself to it: a redeploy never
+# swaps code underneath a GUI that is already running.
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+APP="$(dirname "$(dirname "$SELF")")"
+ROOT="$(dirname "$(dirname "$APP")")"
+NOTEBOOK="$APP/GUI_tiff_pipeline_cajal.py"
+ENV="$(readlink -f "$APP/env" 2>/dev/null || true)"
+VERSION="$(cat "$APP/VERSION" 2>/dev/null || echo "unknown version")"
+
+ME="${USER:-$(id -un)}"
+die() { echo "microscopy-gui: $*" >&2; exit 1; }
+[[ -x "$ENV/bin/marimo" ]] || die "no environment next to $APP -- ask the maintainer to run deploy.sh"
+
+# One port per user, stable across launches, so tunnels and bookmarks never change.
+PORT="${MICROSCOPY_GUI_PORT:-$(( 20000 + $(id -u) % 10000 ))}"
+TTL="${MICROSCOPY_GUI_TTL:-3600}"
+
+# Every account on this server can reach 127.0.0.1, so the GUI needs a password.
+# It is per-user, lives in a private file, and reaches marimo by file path --
+# never on the command line, where `ps` would show it to everyone.
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/microscopy-gui"
+TOKEN_FILE="$CONF/token"
+if [[ ! -s "$TOKEN_FILE" ]]; then
+    ( umask 077 && mkdir -p "$CONF" &&
+      "$ENV/bin/python" -c 'import secrets; print(secrets.token_urlsafe(24), end="")' > "$TOKEN_FILE" )
+fi
+chmod 600 "$TOKEN_FILE"
+URL="http://localhost:${PORT}/?access_token=$(< "$TOKEN_FILE")"
+
+print_setup() {
+    local server
+    server="$(awk '{print $3}' <<< "${SSH_CONNECTION:-}")"
+    server="${server:-$(hostname -f)}"
+    sed -e "s|@PORT@|$PORT|g" -e "s|@TARGET@|$ME@$server|g" \
+        -e "s|@LAUNCHER@|$ROOT/bin/microscopy-gui|g" -e "s|@URL@|$URL|g" << 'SETUP'
+
+Your GUI port on this server is @PORT@.
+
+Start it from your own computer (any OS with ssh):
+
+    ssh -t -o ExitOnForwardFailure=yes -L @PORT@:127.0.0.1:@PORT@ @TARGET@ @LAUNCHER@
+
+then open this link. It is personal and never changes, so bookmark it --
+and keep it to yourself, it is your password for the GUI:
+
+    @URL@
+
+Optional (Linux/Mac): paste into ~/.bashrc or ~/.zshrc to start + open in one go.
+
+microscopy-gui() {
+    ( for i in {1..120}; do
+          if curl -s -o /dev/null "http://localhost:@PORT@"; then
+              if command -v open >/dev/null 2>&1; then open "@URL@"
+              else xdg-open "@URL@"; fi >/dev/null 2>&1
+              break
+          fi
+          sleep 0.5
+      done ) &
+    ssh -t -o ExitOnForwardFailure=yes -L @PORT@:127.0.0.1:@PORT@ @TARGET@ "@LAUNCHER@ $*"
+}
+
+Usage: microscopy-gui [folder containing your brain-id folders]
+If you normally reach this server by another name or address, use that instead
+of the part after the @ above.
+
+SETUP
+}
+
+case "${1:-}" in
+    --setup)   print_setup; exit 0 ;;
+    -h|--help) sed -n '2,9p' "$SELF"; exit 0 ;;
+    -*)        die "unknown option '$1' (try --help)" ;;
+esac
+
+# Where the file browsers start; users can still navigate anywhere they can read.
+DATA_ROOT="${1:-}"
+if [[ -z "$DATA_ROOT" ]]; then
+    if [[ -d "/bigdata/$ME" ]]; then DATA_ROOT="/bigdata/$ME"; else DATA_ROOT="$HOME"; fi
+fi
+DATA_ROOT="$(readlink -f "$DATA_ROOT")"
+[[ -d "$DATA_ROOT" && -r "$DATA_ROOT" ]] || die "can't read folder: $DATA_ROOT"
+
+# Port free? SO_REUSEADDR mirrors the server, so a just-closed port isn't a false alarm.
+if ! "$ENV/bin/python" - "$PORT" << 'PY'
+import socket, sys
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(("127.0.0.1", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+PY
+then
+    if pgrep -u "$ME" -f "marimo run .*--port $PORT" > /dev/null; then
+        die "your GUI is already running on port $PORT (left over from a dropped connection?)
+    stop it with:  pkill -u $ME -f 'marimo run .*--port $PORT'"
+    fi
+    die "port $PORT is taken by another program -- pick one: MICROSCOPY_GUI_PORT=<port> microscopy-gui"
+fi
+
+# A conda-free 'activate': the env's tools first, and nothing from the user's
+# own PYTHONPATH or ~/.local pip installs shadowing the env's packages.
+unset PYTHONHOME
+export PATH="$ENV/bin:$PATH"
+export CONDA_PREFIX="$ENV"
+export PYTHONPATH="$APP"
+export PYTHONNOUSERSITE=1
+set +u
+for _f in "$ENV"/etc/conda/activate.d/*.sh; do
+    if [[ -r "$_f" ]]; then source "$_f"; fi
+done
+set -u
+
+# Read by the notebook.
+export MICROSCOPY_DATA_DIR="$DATA_ROOT"
+export MICROSCOPY_VERSION="$VERSION"
+
+cd "$DATA_ROOT"
+cat << BANNER
+
+  TIFF pipeline GUI -- $VERSION
+  data root : $DATA_ROOT
+  open      : $URL
+  first time? run with --setup for the tunnel command for your computer
+  Ctrl-C here stops the GUI
+
+BANNER
+exec "$ENV/bin/marimo" run "$NOTEBOOK" \
+    --headless --host 127.0.0.1 --port "$PORT" \
+    --token --token-password-file "$TOKEN_FILE" \
+    --session-ttl "$TTL"
