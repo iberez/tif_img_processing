@@ -2,7 +2,7 @@
 
 This repo contains all the code needed to turn raw microscope slide images into processed, **autoaligned single-section TIFF images**: one image per tissue section, rotated and centered.
 
-**Contents:** [Pipeline overview](#pipeline-overview) · [Key files](#key-files) · [How to run](#how-to-run) · [Output](#output)
+**Contents:** [Pipeline overview](#pipeline-overview) · [Key files](#key-files) · [How to run](#how-to-run-for-lab-members) · [Output](#output)
 
 ---
 
@@ -26,24 +26,22 @@ Once processing is done, all sections can be reviewed and manually edited (e.g. 
 | `tiff_pipeline_bridge_functions.py` | Step 2 — functions for extracting single sections and configuring metadata |
 | `tiff_pipeline_ss_functions.py` | Step 3 — single-section processing, including autoalignment (rotation and centering) |
 | `tiff_pipeline_mega_loop.py` | Wrapper around the three modules above that processes all slides |
-| `GUI_tiff_pipeline_cajal.py` | marimo app (GUI) for running the pipeline — see [How to run](#how-to-run) |
+| `GUI_tiff_pipeline_cajal.py` | marimo app (GUI) for running the pipeline — see [How to run](#how-to-run-for-lab-members) |
 | **TODO** | Module(s) behind the review & manual-edit step, e.g. `tiff_pipeline_review_functions.py` |
 
 ---
 
-## How to run
+## How to run (for lab members)
 
-The pipeline is designed to run as a [marimo](https://marimo.io) notebook and assumes marimo is already installed (see the [marimo installation guide](https://docs.marimo.io/getting_started/installation/)).
+The pipeline is designed to run as a [marimo](https://marimo.io) notebook.
 
-Launch the GUI in app view:
+Obtain a personal port by running:
 
 ```bash
-marimo run GUI_tiff_pipeline_cajal.py
+ssh <username>@<cajal_server_address> /bigdata/microscopy/bin/microscopy-gui --setup
 ```
 
-> **TODO:** Other Python dependencies (or link a `requirements.txt` / environment file).
->
-> **TODO:** Short walkthrough of the GUI — choosing the `<brain_id>` folder, running the pipeline, reviewing and editing sections.
+Then follow the instructions for launching the GUI.
 
 ---
 
