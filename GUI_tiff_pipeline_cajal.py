@@ -261,12 +261,13 @@ def _(Path, data_root, mo, review_root_browser):
         if review_root_browser.value
         else data_root#Path("/bigdata/isaac/rabies_img_processing")
     )
+    img_dir = review_root_dir / Path("single_section_autoalign/imgs")
     review_brain_ids = sorted(
-        _d.name for _d in review_root_dir.iterdir()
-        if (_d / "single_section_autoalign" / "imgs").is_dir()
+        _d.name for _d in img_dir.iterdir()
+        #if (_d / "single_section_autoalign" / "imgs").is_dir()
     )
     brain_select = mo.ui.dropdown(options=review_brain_ids, label="brain id")
-    load_all_slides = mo.ui.switch(value=False, label="load all slides (S001, S002, …)")
+    load_all_slides = mo.ui.switch(value=False, label="preload all slides (S001, S002, …) into memory")
     mo.hstack([brain_select, load_all_slides], justify="start", gap=2)
     return brain_select, load_all_slides, review_root_dir
 
@@ -275,7 +276,7 @@ def _(Path, data_root, mo, review_root_browser):
 def _(brain_select, mo, os, re, review_root_dir):
     mo.stop(brain_select.value is None, mo.md("*select a brain id to begin*"))
     brain_id_r = brain_select.value
-    _img_dir = review_root_dir / brain_id_r / "single_section_autoalign" / "imgs"
+    _img_dir = review_root_dir / "single_section_autoalign" / "imgs"  
     _slide_pat = re.compile(r"_img_slice_(S\d+)_section_\d+\.tiff$")
     slide_ids_r = sorted({_m.group(1) for _f in os.listdir(_img_dir) if (_m := _slide_pat.search(_f))})
     mo.stop(not slide_ids_r, mo.md(f"*no aligned sections found for `{brain_id_r}`*"))

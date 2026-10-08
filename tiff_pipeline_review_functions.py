@@ -74,8 +74,14 @@ def find_section_paths(brain_id, slide_num, root="/bigdata/isaac/rabies_img_proc
     Sorts on the parsed integer, not the string, so slides with 10+ sections
     do not come back in lexicographic order (2 after 19).
     """
-    aligned_dir = os.path.join(root, str(brain_id), "single_section_autoalign", "imgs")
-    pattern = os.path.join(aligned_dir, f"{brain_id}_img_slice_{slide_num}_section_*.tiff")
+    print (brain_id)
+    print (slide_num)
+    print (root)
+    print (root.split("/")[-1])
+    aligned_dir = os.path.join(root, "single_section_autoalign", "imgs")
+    print (aligned_dir)
+    pattern = os.path.join(aligned_dir, f"{root.split("/")[-1]}_img_slice_{slide_num}_section_*.tiff")
+    print (pattern)
     paths = glob.glob(pattern)
     if not paths:
         raise FileNotFoundError(f"no sections matched {pattern}")
