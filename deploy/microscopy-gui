@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # microscopy-gui -- run the TIFF pipeline GUI on this server, as YOU.
 #
-#   microscopy-gui [DATA_ROOT]   start the GUI. DATA_ROOT = folder holding your
-#                                brain-id folders (default /bigdata)
+#   microscopy-gui [DATA_ROOT]   start the GUI -- or reconnect to it if it is already
+#                                running. DATA_ROOT = folder holding your brain-id
+#                                folders (default /bigdata)
+#   microscopy-gui --stop        stop your GUI
+#   microscopy-gui --no-tmux     run in this terminal only; the GUI then stops when
+#                                the terminal closes or the connection drops
 #   microscopy-gui --setup       print the one-time setup for your own computer
 #
 # Overrides: MICROSCOPY_GUI_PORT  (default: derived from your user id)
-#            MICROSCOPY_GUI_TTL   (seconds a run survives a dropped browser; default 3600)
+#            MICROSCOPY_GUI_TTL   (seconds a dropped browser tab can rejoin its session; default 3600)
 
 set -eEuo pipefail
 on_err() { echo "microscopy-gui: unexpected failure at line $1 -- send this message to the maintainer" >&2; }
@@ -23,12 +27,27 @@ ENV="$(readlink -f "$APP/env" 2>/dev/null || true)"
 VERSION="$(cat "$APP/VERSION" 2>/dev/null || echo "unknown version")"
 
 ME="${USER:-$(id -un)}"
-die() { echo "microscopy-gui: $*" >&2; exit 1; }
+die()  { echo "microscopy-gui: $*" >&2; exit 1; }
+note() { echo "microscopy-gui: $*" >&2; }
 [[ -x "$ENV/bin/marimo" ]] || die "no environment next to $APP -- ask the maintainer to run deploy.sh"
 
 # One port per user, stable across launches, so tunnels and bookmarks never change.
 PORT="${MICROSCOPY_GUI_PORT:-$(( 20000 + $(id -u) % 10000 ))}"
 TTL="${MICROSCOPY_GUI_TTL:-3600}"
+[[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT >= 1024 && PORT <= 65535 )) \
+    || die "MICROSCOPY_GUI_PORT must be a number from 1024 to 65535"
+[[ "$TTL" =~ ^[0-9]+$ ]] || die "MICROSCOPY_GUI_TTL must be a whole number of seconds"
+
+# The GUI runs inside tmux, so it outlives the ssh connection. It gets a tmux
+# server of its own, so it never mixes with -- or is reconfigured by -- any tmux
+# you use yourself, and its keys are always the defaults.
+SESSION="microscopy-gui"
+TMUX_SOCKET="microscopy-gui"
+TMUX_BIN="$(type -P tmux || true)"
+if [[ -z "$TMUX_BIN" && -x "$ENV/bin/tmux" ]]; then TMUX_BIN="$ENV/bin/tmux"; fi
+tm() { "$TMUX_BIN" -L "$TMUX_SOCKET" "$@"; }
+have_session() { [[ -n "$TMUX_BIN" ]] && tm has-session -t "$SESSION" 2>/dev/null; }
+session_env()  { tm show-environment -t "$SESSION" "$1" 2>/dev/null | sed -n "s/^$1=//p" || true; }
 
 # Every account on this server can reach 127.0.0.1, so the GUI needs a password.
 # It is per-user, lives in a private file, and reaches marimo by file path --
@@ -42,23 +61,33 @@ fi
 chmod 600 "$TOKEN_FILE"
 URL="http://localhost:${PORT}/?access_token=$(< "$TOKEN_FILE")"
 
-print_setup() {
+ssh_target() {
     local server
     server="$(awk '{print $3}' <<< "${SSH_CONNECTION:-}")"
-    server="${server:-$(hostname -f)}"
-    sed -e "s|@PORT@|$PORT|g" -e "s|@TARGET@|$ME@$server|g" -e "s|@DEFAULT@|$DEFAULT_DATA_ROOT|g" \
+    printf '%s@%s' "$ME" "${server:-$(hostname -f 2>/dev/null || hostname)}"
+}
+
+print_setup() {
+    sed -e "s|@PORT@|$PORT|g" -e "s|@TARGET@|$(ssh_target)|g" -e "s|@DEFAULT@|$DEFAULT_DATA_ROOT|g" \
         -e "s|@LAUNCHER@|$ROOT/bin/microscopy-gui|g" -e "s|@URL@|$URL|g" << 'SETUP'
 
 Your GUI port on this server is @PORT@.
 
 Start it from your own computer (any OS with ssh):
 
-    ssh -t -o ExitOnForwardFailure=yes -L @PORT@:127.0.0.1:@PORT@ @TARGET@ @LAUNCHER@
+    ssh -t -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L @PORT@:127.0.0.1:@PORT@ @TARGET@ @LAUNCHER@
 
 then open this link. It is personal and never changes, so bookmark it --
 and keep it to yourself, it is your password for the GUI:
 
     @URL@
+
+The GUI runs inside tmux on the server, so it -- and any processing you start
+in it -- keeps running if that window closes or your connection drops.
+    detach on purpose : press Ctrl-b, then d
+    reconnect         : run the same ssh command again
+    stop it           : Ctrl-C (then y) in that window, or run
+                        ssh @TARGET@ @LAUNCHER@ --stop
 
 Optional (Linux/Mac): paste into ~/.bashrc or ~/.zshrc to start + open in one go.
 
@@ -71,7 +100,7 @@ microscopy-gui() {
           fi
           sleep 0.5
       done ) &
-    ssh -t -o ExitOnForwardFailure=yes -L @PORT@:127.0.0.1:@PORT@ @TARGET@ "@LAUNCHER@ $*"
+    ssh -t -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L @PORT@:127.0.0.1:@PORT@ @TARGET@ "@LAUNCHER@ $*"
 }
 
 Usage: microscopy-gui [folder containing your brain-id folders]
@@ -82,28 +111,9 @@ of the part after the @ above.
 SETUP
 }
 
-case "${1:-}" in
-    --setup)   print_setup; exit 0 ;;
-    -h|--help) sed -n '2,9p' "$SELF"; exit 0 ;;
-    -*)        die "unknown option '$1' (try --help)" ;;
-esac
-
-# Where the file browsers start; users can still navigate anywhere they can read.
-# A folder given on the command line must be usable; if the default isn't
-# (no access yet), start in ~ rather than refusing to launch.
-can_open() { [[ -d "$1" && -r "$1" && -x "$1" ]]; }
-if [[ -n "${1:-}" ]]; then
-    DATA_ROOT="$(readlink -f "$1" || echo "$1")"
-    can_open "$DATA_ROOT" || die "can't open folder: $DATA_ROOT"
-elif can_open "$DEFAULT_DATA_ROOT"; then
-    DATA_ROOT="$DEFAULT_DATA_ROOT"
-else
-    echo "microscopy-gui: no access to $DEFAULT_DATA_ROOT -- starting in your home folder" >&2
-    DATA_ROOT="$HOME"
-fi
-
 # Port free? SO_REUSEADDR mirrors the server, so a just-closed port isn't a false alarm.
-if ! "$ENV/bin/python" - "$PORT" << 'PY'
+port_free() {
+    "$ENV/bin/python" - "$PORT" << 'PY'
 import socket, sys
 s = socket.socket()
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -112,46 +122,287 @@ try:
 except OSError:
     sys.exit(1)
 PY
-then
-    if pgrep -u "$ME" -f "marimo run .*--port $PORT" > /dev/null; then
-        die "your GUI is already running on port $PORT (left over from a dropped connection?)
-    stop it with:  pkill -u $ME -f 'marimo run .*--port $PORT'"
+}
+wait_port_free() {   # $1 = seconds
+    local i
+    for (( i = 0; i < $1 * 2; i++ )); do
+        if port_free; then return 0; fi
+        sleep 0.5
+    done
+    port_free
+}
+
+marimo_pattern() { printf 'marimo run .*--port %s( |$)' "$PORT"; }
+
+stop_gui() {
+    local found=0
+    if have_session; then
+        tm kill-session -t "$SESSION" 2>/dev/null || true
+        found=1
     fi
-    die "port $PORT is taken by another program -- pick one: MICROSCOPY_GUI_PORT=<port> microscopy-gui"
+    # also catches a GUI started with --no-tmux
+    if pgrep -u "$ME" -f "$(marimo_pattern)" > /dev/null; then
+        pkill -u "$ME" -f "$(marimo_pattern)" || true
+        found=1
+    fi
+    if (( found == 0 )); then echo "Your GUI isn't running."; return 0; fi
+    wait_port_free 15 || die "asked your GUI to stop, but port $PORT is still in use -- try again in a minute"
+    echo "Stopped your GUI."
+}
+
+# --- arguments ---------------------------------------------------------------
+MODE=start; USE_TMUX=1; ARG_ROOT=""
+while (( $# )); do
+    case "$1" in
+        --setup)   MODE=setup ;;
+        --stop)    MODE=stop ;;
+        --no-tmux) USE_TMUX=0 ;;
+        -h|--help) MODE=help ;;
+        -*)        die "unknown option '$1' (try --help)" ;;
+        *)         [[ -z "$ARG_ROOT" ]] || die "give at most one folder (got '$ARG_ROOT' and '$1')"
+                   ARG_ROOT="$1" ;;
+    esac
+    shift
+done
+case "$MODE" in
+    setup) print_setup; exit 0 ;;
+    stop)  stop_gui; exit 0 ;;
+    help)  sed -n '2,13p' "$SELF"; exit 0 ;;
+esac
+
+# Set by the tmux session this script starts: this copy is the one that runs
+# marimo inside the tmux window.
+IN_PANE=0
+if [[ "${MICROSCOPY_GUI_IN_TMUX:-}" == 1 ]]; then IN_PANE=1; fi
+
+pause_on_error() {
+    echo
+    echo "  The GUI stopped (exit code $1) -- see the messages above."
+    if [[ -t 0 ]]; then read -r -p "  Press Enter to close this window. " _ || true; fi
+}
+if (( IN_PANE )); then
+    # Keep the window open after a failure, so the error can be read -- even
+    # by someone who reconnects later. (129/143: stopped on purpose.)
+    trap 'rc=$?; case $rc in 0|129|130|143) ;; *) pause_on_error "$rc" ;; esac' EXIT
 fi
 
-# A conda-free 'activate': the env's tools first, and nothing from the user's
-# own PYTHONPATH or ~/.local pip installs shadowing the env's packages.
-unset PYTHONHOME
-export PATH="$ENV/bin:$PATH"
-export CONDA_PREFIX="$ENV"
-export PYTHONPATH="$APP"
-export PYTHONNOUSERSITE=1
-# Conda's activation scripts aren't written for `set -e` (a trailing
-# `[ ... ] && export ...` returns 1), so run them with error handling paused.
-trap - ERR
-set +eu
-for _f in "$ENV"/etc/conda/activate.d/*.sh; do
-    if [[ -r "$_f" ]]; then source "$_f"; fi
-done
-set -eu
-trap 'on_err $LINENO' ERR
+# Where the file browsers start; users can still navigate anywhere they can read.
+# A folder given on the command line must be usable; if the default isn't
+# (no access yet), start in ~ rather than refusing to launch.
+can_open() { [[ -d "$1" && -r "$1" && -x "$1" ]]; }
+resolve_data_root() {
+    if [[ -n "$ARG_ROOT" ]]; then
+        DATA_ROOT="$(readlink -f "$ARG_ROOT" || echo "$ARG_ROOT")"
+        can_open "$DATA_ROOT" || die "can't open folder: $DATA_ROOT"
+    elif can_open "$DEFAULT_DATA_ROOT"; then
+        DATA_ROOT="$DEFAULT_DATA_ROOT"
+    else
+        note "no access to $DEFAULT_DATA_ROOT -- starting in your home folder"
+        DATA_ROOT="$HOME"
+    fi
+}
 
-# Read by the notebook.
-export MICROSCOPY_DATA_DIR="$DATA_ROOT"
-export MICROSCOPY_VERSION="$VERSION"
+check_port() {
+    if port_free; then return 0; fi
+    if pgrep -u "$ME" -f "$(marimo_pattern)" > /dev/null; then
+        die "your GUI is already running on port $PORT, outside tmux (started with --no-tmux?)
+    stop it with:  $ROOT/bin/microscopy-gui --stop     then start again"
+    fi
+    die "port $PORT is taken by another program -- pick one: MICROSCOPY_GUI_PORT=<port> microscopy-gui"
+}
 
-cd "$DATA_ROOT"
-cat << BANNER
+want_tmux() {
+    (( USE_TMUX )) || return 1
+    [[ -z "${TMUX:-}" ]] || return 1    # already inside tmux: already protected
+    if [[ -z "$TMUX_BIN" ]]; then
+        note "tmux isn't installed on this server -- running without it, so closing this window stops the GUI"
+        return 1
+    fi
+    if [[ ! -t 0 || ! -t 1 ]]; then
+        note "no terminal here (the ssh command needs -t) -- running without tmux, so closing this window stops the GUI"
+        return 1
+    fi
+    # tmux must know this terminal type; fall back to a common one if the server doesn't.
+    if type -P infocmp > /dev/null && ! infocmp "${TERM:-dumb}" > /dev/null 2>&1 \
+       && infocmp xterm-256color > /dev/null 2>&1; then
+        export TERM=xterm-256color
+    fi
+}
+
+sq() { local s=${1//\'/\'\\\'\'}; printf "'%s'" "$s"; }   # quote for /bin/sh
+
+# Settings for the GUI's own tmux server only -- rewritten at every start.
+write_tmux_conf() {
+    ( umask 077 && mkdir -p "$CONF" && cat > "$CONF/tmux.conf" ) << 'EOF'
+# Written by microscopy-gui each time it starts the GUI; edits are overwritten.
+# Used only by the GUI's own tmux server, never by your other tmux sessions.
+set -g prefix C-b
+bind d detach-client
+bind C-d detach-client
+set -g history-limit 50000
+set -g status-left " TIFF pipeline GUI "
+set -g status-left-length 20
+set -g status-right " Ctrl-b d: detach (GUI keeps running) "
+set -g status-right-length 60
+EOF
+}
+
+# Shows the tmux window here until you detach or the GUI stops.
+# Returns 1 only if this terminal couldn't show tmux at all.
+attach_gui() {
+    local rc=0 started=$SECONDS
+    tm attach-session -t "$SESSION" || rc=$?
+    if (( rc != 0 && SECONDS - started < 3 )) && have_session; then return 1; fi
+    if have_session; then
+        cat << EOF
+
+  Detached -- your GUI keeps running on the server.
+  The browser link works again once you reconnect.
+    reconnect : run the same ssh command again
+    stop it   : reconnect and press Ctrl-C (then y), or run
+                ssh $(ssh_target) $ROOT/bin/microscopy-gui --stop
+
+EOF
+    else
+        printf '\n  The GUI has stopped.\n\n'
+    fi
+}
+
+start_in_tmux() {
+    local rows=24 cols=80 size inner
+    size="$(stty size 2>/dev/null || true)"
+    if [[ "$size" =~ ^([0-9]+)\ ([0-9]+)$ ]] && (( BASH_REMATCH[1] > 0 && BASH_REMATCH[2] > 0 )); then
+        rows="${BASH_REMATCH[1]}"; cols="${BASH_REMATCH[2]}"
+    fi
+    write_tmux_conf
+    inner="exec env MICROSCOPY_GUI_IN_TMUX=1 MICROSCOPY_GUI_PORT=$PORT MICROSCOPY_GUI_TTL=$TTL"
+    inner+=" $(sq "$SELF") $(sq "$DATA_ROOT")"
+    # SHELL=/bin/sh: tmux runs that command with this shell, whatever your login shell is.
+    if ! SHELL=/bin/sh tm -f "$CONF/tmux.conf" new-session -d -s "$SESSION" -n gui \
+            -x "$cols" -y "$rows" "$inner" 2> /dev/null; then
+        # a second launch a moment after the first: just join it
+        if have_session; then attach_gui || true; return 0; fi
+        note "couldn't start tmux -- running without it, so closing this window stops the GUI"
+        return 1
+    fi
+    # remembered for reconnecting (see reattach_gui)
+    tm set-environment -t "$SESSION" MICROSCOPY_VERSION "$VERSION" 2>/dev/null || true
+    tm set-environment -t "$SESSION" MICROSCOPY_DATA_DIR "$DATA_ROOT" 2>/dev/null || true
+    if ! attach_gui; then
+        tm kill-session -t "$SESSION" 2>/dev/null || true
+        note "this terminal can't show tmux (TERM=${TERM:-unset}) -- running without it, so closing this window stops the GUI"
+        wait_port_free 10 || die "port $PORT is still in use -- try again in a minute"
+        return 1
+    fi
+}
+
+reattach_gui() {
+    local running_version running_root wanted pause=0
+    running_version="$(session_env MICROSCOPY_VERSION)"
+    running_root="$(session_env MICROSCOPY_DATA_DIR)"
+    echo
+    echo "  Your GUI is already running -- reconnecting to it."
+    if [[ -n "$ARG_ROOT" && -n "$running_root" ]]; then
+        wanted="$(readlink -f "$ARG_ROOT" || echo "$ARG_ROOT")"
+        if [[ "$wanted" != "$running_root" ]]; then
+            echo "  It started in $running_root, not $wanted."
+            echo "  To switch folders, stop it (Ctrl-C, then y) and start it again."
+            pause=1
+        fi
+    fi
+    if [[ -n "$running_version" && "$running_version" != "$VERSION" ]]; then
+        echo "  It runs ${running_version%% *}; ${VERSION%% *} has been deployed since. To update, stop it"
+        echo "  (Ctrl-C, then y) once nothing is processing, and start it again."
+        tm set-option -t "$SESSION" status-right \
+            " update available: restart when idle | Ctrl-b d: detach " > /dev/null 2>&1 || true
+        pause=1
+    fi
+    if (( pause )); then sleep 4; fi
+    attach_gui || die "this terminal can't show tmux (TERM=${TERM:-unset}), but your GUI is still running.
+    Reconnect from another terminal app, or stop it with:  $ROOT/bin/microscopy-gui --stop"
+}
+
+run_gui() {   # $1 = foreground | pane
+    # A conda-free 'activate': the env's tools first, and nothing from the user's
+    # own PYTHONPATH or ~/.local pip installs shadowing the env's packages.
+    unset PYTHONHOME
+    export PATH="$ENV/bin:$PATH"
+    export CONDA_PREFIX="$ENV"
+    export PYTHONPATH="$APP"
+    export PYTHONNOUSERSITE=1
+    # Conda's activation scripts aren't written for `set -e` (a trailing
+    # `[ ... ] && export ...` returns 1), so run them with error handling paused.
+    trap - ERR
+    set +eu
+    for _f in "$ENV"/etc/conda/activate.d/*.sh; do
+        if [[ -r "$_f" ]]; then source "$_f"; fi
+    done
+    set -eu
+    trap 'on_err $LINENO' ERR
+
+    # Read by the notebook.
+    export MICROSCOPY_DATA_DIR="$DATA_ROOT"
+    export MICROSCOPY_VERSION="$VERSION"
+
+    cd "$DATA_ROOT"
+    cat << BANNER
 
   TIFF pipeline GUI -- $VERSION
   data root : $DATA_ROOT
   open      : $URL
+BANNER
+    local cmd=( "$ENV/bin/marimo" run "$NOTEBOOK"
+                --headless --host 127.0.0.1 --port "$PORT"
+                --token --token-password-file "$TOKEN_FILE"
+                --session-ttl "$TTL" )
+    if [[ "$1" == foreground ]]; then
+        cat << 'BANNER'
   first time? run with --setup for the tunnel command for your computer
-  Ctrl-C here stops the GUI
+  Ctrl-C here (then y) stops the GUI -- so does closing this window or
+  losing the connection
 
 BANNER
-exec "$ENV/bin/marimo" run "$NOTEBOOK" \
-    --headless --host 127.0.0.1 --port "$PORT" \
-    --token --token-password-file "$TOKEN_FILE" \
-    --session-ttl "$TTL"
+        exec "${cmd[@]}"
+    fi
+    cat << 'BANNER'
+
+  This window is a tmux session on the server: the GUI, and any processing you
+  start in it, keep running if you close this window or your connection drops.
+  Progress messages from the pipeline appear here.
+
+    detach (leave it running) : press Ctrl-b, let go, then press d
+                                (Ctrl, not Cmd, on a Mac)
+    reconnect                 : run the same ssh command again
+    stop the GUI              : Ctrl-C here, then y -- when you're done, since
+                                a running GUI holds memory on the server
+
+BANNER
+    # Ctrl-C reaches marimo, which asks to confirm; this script stays behind to
+    # report how it ended.
+    trap ':' INT
+    local rc=0
+    "${cmd[@]}" || rc=$?
+    trap - INT
+    case $rc in 0|129|130|143) exit 0 ;; esac
+    exit "$rc"
+}
+
+# --- main --------------------------------------------------------------------
+if (( IN_PANE )); then
+    resolve_data_root
+    run_gui pane
+fi
+
+if want_tmux; then
+    if have_session; then
+        reattach_gui
+        exit 0
+    fi
+    resolve_data_root
+    check_port
+    if start_in_tmux; then exit 0; fi
+else
+    resolve_data_root
+    check_port
+fi
+run_gui foreground
