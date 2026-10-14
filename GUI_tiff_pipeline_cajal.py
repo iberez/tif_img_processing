@@ -262,20 +262,21 @@ def _(Path, data_root, mo, review_root_browser):
         else data_root#Path("/bigdata/isaac/rabies_img_processing")
     )
     img_dir = review_root_dir / Path("single_section_autoalign/imgs")
-    review_brain_ids = sorted(
-        _d.name for _d in img_dir.iterdir()
+    if len(review_root_browser.value)>0:
+        review_brain_ids = sorted(
+            _d.name for _d in img_dir.iterdir()
         #if (_d / "single_section_autoalign" / "imgs").is_dir()
     )
-    brain_select = mo.ui.dropdown(options=review_brain_ids, label="brain id")
-    load_all_slides = mo.ui.switch(value=False, label="preload all slides (S001, S002, …) into memory")
-    mo.hstack([brain_select, load_all_slides], justify="start", gap=2)
-    return brain_select, load_all_slides, review_root_dir
+    #brain_select = mo.ui.dropdown(options=review_brain_ids, label="brain id")
+    load_all_slides = mo.ui.switch(value=False, label="Preload all slides (S001, S002, etc…) into memory. May take a few minutes... useful when reviewing many slides.")
+    mo.hstack([load_all_slides], justify="start", gap=2)
+    return load_all_slides, review_root_dir
 
 
 @app.cell(hide_code=True)
-def _(brain_select, mo, os, re, review_root_dir):
-    mo.stop(brain_select.value is None, mo.md("*select a brain id to begin*"))
-    brain_id_r = brain_select.value
+def _(mo, os, re, review_root_browser, review_root_dir):
+    mo.stop(len(review_root_browser.value) is 0, mo.md("*select a brain id to begin*"))
+    brain_id_r = review_root_browser.value[0].name
     _img_dir = review_root_dir / "single_section_autoalign" / "imgs"  
     _slide_pat = re.compile(r"_img_slice_(S\d+)_section_\d+\.tiff$")
     slide_ids_r = sorted({_m.group(1) for _f in os.listdir(_img_dir) if (_m := _slide_pat.search(_f))})
@@ -507,8 +508,14 @@ def _(
 
 
 @app.cell
-def _(brain_id_r, os, review_root_dir):
-    review_root = os.path.join(str(review_root_dir), brain_id_r, "single_section_review")
+def _(os, review_root_dir):
+    print (os.path.join(str(review_root_dir), "single_section_review"))
+    return
+
+
+@app.cell
+def _(os, review_root_dir):
+    review_root = os.path.join(str(review_root_dir), "single_section_review")
     applied_dir = os.path.join(review_root, "imgs")
     review_transforms_dir = os.path.join(review_root, "review_transforms")
     return applied_dir, review_transforms_dir
