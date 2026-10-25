@@ -14,7 +14,7 @@ The pipeline takes a folder named by a brain ID (e.g. `137_02`) that contains th
 2. **Extraction of single sections & metadata configuration** — maps the section labels from step 1 back onto the full-resolution slide and crops each section into its own image. *Output:* `single_section_autoraw/`
 3. **Single-section processing** — autoaligns each section: finds its midline, rotates the section so the midline is vertical, and centers it. *Output:* `single_section_autoalign/`
 
-Once processing is done, all sections can be reviewed and manually edited (e.g. keep/reject, rotate, flip, remove unwanted fragments).
+Once processing is done, all sections can be reviewed and manually edited (e.g. keep/reject, rotate, flip, remove unwanted fragments). Reviewed sections are stored in `single_section_review/`
 
 ---
 
@@ -76,15 +76,20 @@ Files named with `<slide_id>` exist once per slide; files that also carry `<n>` 
 │   └── <slide_id>.tif_section_<n>.tiff
 │
 └── single_section_autoalign/     # step 3 · single-section processing
-    ├── imgs/                     # ★ main output: autoaligned section images
-    │   └── <brain_id>_img_slice_<slide_id>_section_<n>.tiff
-    ├── masks/                    # section masks
-    │   └── <brain_id>_mask_slice_<slide_id>_section_<n>.npy
-    ├── plots/                    # per-section QC plots
-    │   ├── combined/             # TODO
-    │   └── <brain_id>_autorotated_centered_slice_<slide_id>_section_<n>.pdf
-    └── transforms/               # per-slide transform tables
-        └── <brain_id>_slide_<slide_id>_transforms.csv
+│    ├── imgs/                     # ★ main output: autoaligned section images
+│    │   └── <brain_id>_img_slice_<slide_id>_section_<n>.tiff
+│    ├── masks/                    # section masks
+│    │   └── <brain_id>_mask_slice_<slide_id>_section_<n>.npy
+│    ├── plots/                    # per-section QC plots
+│    │   ├── combined/             # TODO
+│    │   └── <brain_id>_autorotated_centered_slice_<slide_id>_section_<n>.pdf
+│    └── transforms/               # per-slide transform tables
+│        └── <brain_id>_slide_<slide_id>_transforms.csv
+│
+└── single_section_review #folder containing reviewd/manually edited section
+    ├── imgs/                       #reviewed images
+    └── review_transforms/          #per-slide transforms, joins previous transforms and manual review transforms into single file 
+
 ```
 
 > **Disk space:** in sample brain `137_02`, each raw slide is ~1.9 GB and every section adds ~0.4 GB of output (a 184 MB TIFF in both `single_section_autoraw/` and `single_section_autoalign/imgs/`, plus a 46 MB mask), so a 15-section slide produces ~6 GB.

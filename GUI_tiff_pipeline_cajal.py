@@ -482,25 +482,26 @@ def _(
         set_edit_state(_e)
         print(f"section {_i + 1} flip L/R: {_cur['flip_lr']}")
 
-
+    flip_lr_r = mo.ui.button(
+        label="1. Flip L/R", kind="neutral",
+        on_change=_do_flip,
+    )
     draw_sym_line = mo.ui.button(
-        label="draw sym line", kind="warn" if _armed else "neutral",
+        label="2. Draw Sym Line (rotation)", kind="warn" if _armed else "neutral",
         on_change=_do_line,
     )
     remove_selection = mo.ui.button(
-        label="remove selection (lasso)", kind="warn" if _armed else "neutral",
+        label="3. Remove Selection", kind="warn" if _armed else "neutral",
         on_change=_do_remove,
     )
+
     undo_selection = mo.ui.button(
-        label="undo selection", kind="neutral",
+        label="4. Undo Selection", kind="neutral",
         on_change=_do_undo,
     )
-    flip_lr_r = mo.ui.button(
-        label="flip L/R", kind="neutral",
-        on_change=_do_flip,
-    )
+
     mo.vstack([
-        mo.hstack([draw_sym_line, remove_selection, undo_selection, flip_lr_r],
+        mo.hstack([flip_lr_r, draw_sym_line, remove_selection, undo_selection],
                   justify="start", gap=0.5),
         mo.md("[\u2191 back to Slide Review](#slide-review)"),
     ])
