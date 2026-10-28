@@ -91,12 +91,19 @@ def inventory_sections(label_mask, slide_name, scale_y, scale_x):
         })
     return pl.DataFrame(rows).sort("need_raw", descending=True)
 
-def plan_canvas(inv_dfs, mask_downsample=10, margin_frac=0.10, round_to=64):
+def plan_canvas(inv_dfs, mask_downsample=10, margin_frac=0.10, round_to=64,
+                outlier_ratio=1.25, percentile=98):
     """Freeze ONE canvas size for the whole study.
 
     inv_dfs: list of per-slide DataFrames from inventory_sections(), one per
     slide. Must cover every slide you intend to process -- recomputing this
     per batch would give different-sized outputs across batches.
+
+    Outlier guard: if the largest r_max is more than `outlier_ratio` x the
+    median r_max (typically a stray fragment carrying a section's label),
+    the canvas is sized from the `percentile`-th percentile r_max instead of
+    the max. Sections above the canvas are then cropped and flagged by
+    extract_sections() rather than raising.
 
     Note the 10x mask was block-max downsampled, so it is a dilation of the
     true tissue mask; r_max * mask_downsample therefore OVERestimates the
@@ -104,13 +111,31 @@ def plan_canvas(inv_dfs, mask_downsample=10, margin_frac=0.10, round_to=64):
     """
     all_inv = pl.concat(inv_dfs)
     limiting = all_inv.sort("r_max", descending=True).row(0, named=True)
+    med_r = all_inv["r_max"].median()
+    is_outlier = limiting["r_max"] > outlier_ratio * med_r
 
-    r_max_raw = all_inv["r_max"].max() * mask_downsample
+    if is_outlier:
+        r_max_used = float(np.percentile(all_inv["r_max"].to_numpy(), percentile))
+    else:
+        r_max_used = limiting["r_max"]
+
+    r_max_raw = r_max_used * mask_downsample
     needed = 2.0 * r_max_raw * (1.0 + margin_frac)
     canvas = int(np.ceil(needed / round_to) * round_to)
 
     n_edge = int(all_inv["touches_edge"].sum())
-    print(f"limiting section : label {limiting['label']}  r_max={limiting['r_max']:.1f} (10x)")
+    print(f"limiting section : {limiting['slide']} label {limiting['label']}  "
+          f"r_max={limiting['r_max']:.1f} (10x, {limiting['r_max'] / med_r:.2f}x median)")
+    if is_outlier:
+        over = all_inv.filter(pl.col("need_raw") > canvas).sort("need_raw", descending=True)
+        print(f"WARNING: limiting r_max > {outlier_ratio}x median -- sizing canvas "
+              f"from p{percentile} r_max={r_max_used:.1f} instead of the max")
+        print(f"         {over.height} section(s) exceed the canvas and will be cropped:")
+        for rec in over.iter_rows(named=True):
+            print(f"           {rec['slide']} label {rec['label']}: r_max={rec['r_max']:.1f} "
+                  f"({rec['r_max'] / med_r:.2f}x median)")
+    else:
+        print(f"sizing           : max r_max (no outlier above {outlier_ratio}x median)")
     print(f"required extent  : {2 * r_max_raw:.0f} raw px")
     print(f"canvas           : {canvas} x {canvas}  "
           f"(slack {canvas - 2 * r_max_raw:.0f} px)")
@@ -174,10 +199,14 @@ def extract_sections(
     for rec in inv_df.iter_rows(named=True):
         lab = rec["label"]
 
-        if rec["need_raw"] > canvas_size:
-            raise ValueError(
-                f"{slide_name} section {lab} needs {rec['need_raw']:.0f} px but "
-                f"canvas is {canvas_size} -- rotation will clip. Re-run plan_canvas."
+        # When plan_canvas falls back to a percentile (outlier guard), the
+        # outlier section(s) exceed the canvas: crop and flag, don't abort.
+        exceeds_canvas = bool(rec["need_raw"] > canvas_size)
+        if exceeds_canvas:
+            print(
+                f"  WARNING: {slide_name} section {lab} needs {rec['need_raw']:.0f} px "
+                f"but canvas is {canvas_size} -- cropping; label pixels beyond "
+                f"the canvas (or rotated out of it) will be lost."
             )
 
         # Mask pixel i spans raw rows [i*s, (i+1)*s); its centre is at
@@ -233,6 +262,7 @@ def extract_sections(
             "canvas_size": canvas_size, "background": background,
             "crop_y0": y0, "crop_x0": x0,       # canvas origin in raw coords
             "clipped": clipped,
+            "exceeds_canvas": exceeds_canvas,
             "centroid_y_raw": cy_raw, "centroid_x_raw": cx_raw,
             "r_max_raw": rec["need_raw"] / 2.0,
             "scale_y": scale_y, "scale_x": scale_x,

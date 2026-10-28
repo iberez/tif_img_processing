@@ -203,12 +203,12 @@ def _(mo):
 
 @app.cell
 def _(Path, mo):
-    _pp_debug_enable = False
+    _pp_debug_enable = True
     #single slide all preprocessing functions
     mo.stop(_pp_debug_enable is False, mo.md("*preprocessing loop disabled (`_pp_debug_enable` is False)*"))
 
 
-    WORKDIR = Path("/bigdata/isaac/rabies_img_processing/129_02")
+    WORKDIR = Path("/bigdata/isaac/rabies_img_processing/140_02")
 
     slide_browser = mo.ui.file_browser(
         initial_path=WORKDIR,
@@ -851,7 +851,7 @@ def _(mo):
 
 @app.cell
 def _(Path, annotated_output, mo, pl, tpbf):
-    _md_loop_enable = False
+    _md_loop_enable = True
     #single slide all preprocessing functions
     mo.stop(_md_loop_enable is False, mo.md("*bridge metadata loop disabled (`_md_loop_enable` is False)*"))
 
@@ -870,6 +870,23 @@ def _(Path, annotated_output, mo, pl, tpbf):
     print(f"{len(inv_dfs)} slides, {sum(d.height for d in inv_dfs)} sections total")
     pl.concat(inv_dfs).sort("need_raw", descending=True).head(10)
     return inv_dfs, slide_inputs
+
+
+@app.cell
+def _(inv_dfs):
+    inv_dfs[0]['r_max']
+    return
+
+
+@app.cell
+def _(inv_dfs, np):
+    print (np.median(inv_dfs[0]['r_max']))
+    return
+
+
+@app.cell
+def _():
+    return
 
 
 @app.cell
@@ -893,6 +910,12 @@ def _(inv_dfs, tpbf):
 
 
 @app.cell
+def _(canvas_size):
+    canvas_size
+    return
+
+
+@app.cell
 def _(Path, slide_out_folder):
     single_section_out_dir = str(Path(slide_out_folder).parent) + '/single_section_autoraw/'
     return (single_section_out_dir,)
@@ -906,7 +929,7 @@ def _(single_section_out_dir):
 
 @app.cell
 def _(canvas_size, mo, pl, single_section_out_dir, slide_inputs, tpbf):
-    _bridge_loop_enable = False
+    _bridge_loop_enable = True
     #single slide all preprocessing functions
     mo.stop(_bridge_loop_enable is False, mo.md("*bridge slide to single section loop disabled (`_bridge_loop_enable` is False)*"))
 
@@ -1397,6 +1420,114 @@ def _(mo, np, tifffile):
     for _p in [_python_section_path, _python_section_path_1,_python_section_path_2,_python_section_path_3]:
         _a = tifffile.imread(_p)
         print(_p, _a.shape,_a.dtype, _a.min(), _a.max(), np.percentile(_a[_a>0], 99.9))
+    return
+
+
+@app.cell
+def _(np, plt, tppf):
+    #load and compare autoraw
+    _ar_img_1 = "/bigdata/isaac/rabies_img_processing/140_01/single_section_autoraw/S011.tif_section_1.tiff"
+    _ar_img_2 = "/bigdata/isaac/rabies_img_processing/140_02/single_section_autoraw/S011.tif_section_1.tiff"
+
+    _ar_down_1 = tppf.downsample_tiff(_ar_img_1)
+    _ar_down_2 = tppf.downsample_tiff(_ar_img_2)
+
+    _ar_ch = 0
+    _ar_c1 = _ar_down_1[_ar_ch]
+    _ar_c2 = _ar_down_2[_ar_ch]
+
+    _fig_ar, _ax_ar = plt.subplots(1, 2, figsize=(14, 6))
+    _ax_ar[0].imshow(_ar_c1, cmap="gray", vmax=np.percentile(_ar_c1, 99.5))
+    _ax_ar[0].set_title(f"140_01 autoraw ch{_ar_ch} S011 section 1 — {_ar_c1.shape}")
+    _ax_ar[1].imshow(_ar_c2, cmap="gray", vmax=np.percentile(_ar_c2, 99.5))
+    _ax_ar[1].set_title(f"140_02 autoraw ch{_ar_ch} S011 section 1 — {_ar_c2.shape}")
+    for _a in _ax_ar:
+        _a.axis("off")
+    plt.tight_layout()
+    plt.savefig('/bigdata/isaac/rabies_img_processing/140_01_vs_140_02_S011_section_1_comparison.pdf')
+    plt.gca()
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(Path, mo, ndi, np, pl, tpbf):
+    def _audit_brain(brain_id, root="/bigdata/isaac/rabies_img_processing"):
+        rows = []
+        for meta_path in sorted(Path(root, brain_id).rglob("*_bridge_meta.json")):
+            label_mask, meta = tpbf.load_bridge_inputs(meta_path)
+            inv = tpbf.inventory_sections(label_mask, meta["slide_name"], meta["scale_y"], meta["scale_x"])
+            slices = ndi.find_objects(label_mask)
+            for rec in inv.iter_rows(named=True):
+                sec = label_mask[slices[rec["label"] - 1]] == rec["label"]
+                cc, n_cc = ndi.label(sec)
+                sizes = np.bincount(cc.ravel())[1:]
+                yy, xx = np.nonzero(sec)
+                dist = np.hypot(yy - yy.mean(), xx - xx.mean())
+                far = int(np.argmax(dist))
+                # pieces at least 2% the size of the main piece (drops specks, keeps hemispheres)
+                big = np.isin(cc[yy, xx], np.flatnonzero(sizes >= 0.02 * sizes.max()) + 1)
+                rows.append({
+                    "brain": brain_id,
+                    "slide": rec["slide"],
+                    "label": rec["label"],
+                    "r_max": rec["r_max"],
+                    "r_max_no_specks": float(np.hypot(yy[big] - yy[big].mean(), xx[big] - xx[big].mean()).max()),
+                    "n_components": int(n_cc),
+                    "far_piece_frac": float(sizes[cc[yy[far], xx[far]] - 1] / sizes.sum()),
+                    "bbox_h": rec["bbox_h"],
+                    "bbox_w": rec["bbox_w"],
+                    "touches_edge": rec["touches_edge"],
+                    "scale_y": meta["scale_y"],
+                    "scale_x": meta["scale_x"],
+                    "centroid_y": rec["centroid_y"],
+                    "centroid_x": rec["centroid_x"],
+                    "meta_path": str(meta_path),
+                })
+        return pl.DataFrame(rows)
+
+    canvas_audit = pl.concat([_audit_brain("140_01"), _audit_brain("140_02")]).with_columns(
+        (pl.col("r_max") / pl.col("r_max").median().over("brain")).alias("x_brain_median"),
+        ((2 * pl.col("r_max") * 10 * 1.05 / 64).ceil() * 64).cast(pl.Int64).alias("canvas_if_limiting"),
+    )
+    _per_brain = (
+        canvas_audit.group_by("brain")
+        .agg(
+            pl.col("canvas_if_limiting").max().alias("canvas_planned"),
+            pl.col("r_max").max().alias("r_max_max"),
+            pl.col("r_max").median().alias("r_max_median"),
+            pl.col("scale_y").min().alias("scale_y_min"),
+            pl.col("scale_y").max().alias("scale_y_max"),
+            pl.col("scale_x").min().alias("scale_x_min"),
+            pl.col("scale_x").max().alias("scale_x_max"),
+        )
+        .sort("brain")
+    )
+    mo.vstack([
+        _per_brain,
+        canvas_audit.sort("r_max", descending=True).drop("meta_path", "centroid_y", "centroid_x").head(15),
+    ])
+    return (canvas_audit,)
+
+
+@app.cell
+def _(canvas_audit, np, pl, plt, tpbf):
+    _worst = canvas_audit.filter(pl.col("brain") == "140_02").sort("r_max", descending=True).row(0, named=True)
+    _label_mask, _meta = tpbf.load_bridge_inputs(_worst["meta_path"])
+    _fig, _ax = plt.subplots(figsize=(14, 7))
+    _ax.imshow(_label_mask > 0, cmap="gray")
+    _ax.imshow(np.ma.masked_where(_label_mask != _worst["label"], _label_mask), cmap="autumn", alpha=0.8)
+    _ax.add_patch(plt.Circle((_worst["centroid_x"], _worst["centroid_y"]), _worst["r_max"],
+                             fill=False, color="cyan", lw=1.5))
+    _ax.set_title(f"{_worst['brain']} {_worst['slide']} label {_worst['label']}: "
+                  f"r_max={_worst['r_max']:.0f}, without specks={_worst['r_max_no_specks']:.0f} (mask px)")
+    _ax.axis("off")
+    #plt.savefig('/bigdata/isaac/rabies_img_processing/140_02_stray_frag.pdf')
+    plt.gca()
     return
 
 
