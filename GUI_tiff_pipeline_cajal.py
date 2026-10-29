@@ -517,8 +517,8 @@ def _(os, review_root_dir):
 @app.cell
 def _(os, review_root_dir):
     review_root = os.path.join(str(review_root_dir), "single_section_review")
-    applied_dir = os.path.join(review_root, "imgs")
-    review_transforms_dir = os.path.join(review_root, "review_transforms")
+    applied_dir = os.path.join(review_root_dir, "single_section")
+    review_transforms_dir = os.path.join(review_root_dir, "review_transforms")
     return applied_dir, review_transforms_dir
 
 
